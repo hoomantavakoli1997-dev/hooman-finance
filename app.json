@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Hooman Finance",
+    "slug": "hooman-finance",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "com.hooman.finance",
+      "versionCode": 1,
+      "permissions": [
+        "INTERNET"
+      ]
+    },
+    "plugins": []
+  }
+}
