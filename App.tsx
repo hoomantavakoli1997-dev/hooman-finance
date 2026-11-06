@@ -14,7 +14,7 @@ export default function App() {
   const web = useRef<WebView>(null);
 
   const reply = useCallback((id: string, ok: boolean, status: number, body: string, err: string) => {
-    const esc = (v: unknown) => JSON.stringify(v).replace(/ /g, '\\u2028').replace(/ /g, '\\u2029');
+    const esc = (v: unknown) => JSON.stringify(v).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029');
     web.current?.injectJavaScript(
       `window.__bridgeReply && window.__bridgeReply(${esc(id)}, ${ok}, ${status}, ${esc(body)}, ${esc(err)}); true;`,
     );
