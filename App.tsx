@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { BackHandler, Platform, StatusBar, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
+import Constants from 'expo-constants';
+import * as FileSystem from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
 
 /**
@@ -9,6 +12,10 @@ import appHtml from './src/native/appHtml';
  * - درخواست قیمت (TGJU) از طریق fetch بومی انجام می‌شود تا محدودیت CORS مرورگر وجود نداشته باشد.
  */
 const TGJU_HOST = 'https://call.tgju.org/';
+/** مخزنی که نسخه‌های APK در بخش Releases آن منتشر می‌شود (باید عمومی باشد) */
+const UPDATE_REPO = 'hoomantavakoli1997-dev/hooman-finance';
+/** شماره‌ی ساخت همین نسخه؛ هنگام ساخت در GitHub Actions در app.json قرار می‌گیرد */
+const BUILD = Number((Constants.expoConfig?.extra as { build?: number } | undefined)?.build ?? 0);
 
 export default function App() {
   const web = useRef<WebView>(null);
@@ -20,6 +27,69 @@ export default function App() {
     );
   }, []);
 
+  const call = useCallback((fn: string, ...args: unknown[]) => {
+    const esc = (v: unknown) => JSON.stringify(v).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029');
+    web.current?.injectJavaScript(`window.${fn} && window.${fn}(${args.map(esc).join(',')}); true;`);
+  }, []);
+
+  const checkUpdate = useCallback(async () => {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+        headers: { Accept: 'application/vnd.github+json' },
+      });
+      if (res.status === 404) {
+        call('__updateReply', { ok: false, current: BUILD, latest: 0, url: '', size: 0, notes: '', error: 'نسخه‌ی منتشرشده‌ای پیدا نشد (مخزن باید عمومی باشد).' });
+        return;
+      }
+      if (!res.ok) throw new Error(String(res.status));
+      const rel = (await res.json()) as {
+        tag_name: string; body?: string;
+        assets: { name: string; size: number; browser_download_url: string }[];
+      };
+      const latest = Number(/(\d+)\s*$/.exec(rel.tag_name)?.[1] ?? 0);
+      const asset = rel.assets.find((x) => x.name.endsWith('.apk'));
+      call('__updateReply', {
+        ok: true, current: BUILD, latest, url: asset?.browser_download_url ?? '', size: asset?.size ?? 0,
+        notes: rel.body ?? '', error: '',
+      });
+    } catch {
+      call('__updateReply', { ok: false, current: BUILD, latest: 0, url: '', size: 0, notes: '', error: 'بررسی نسخه‌ی جدید انجام نشد. اینترنت را بررسی کنید.' });
+    }
+  }, [call]);
+
+  const installUpdate = useCallback(
+    async (url: string) => {
+      if (!url.startsWith(`https://github.com/${UPDATE_REPO}/releases/download/`)) {
+        call('__updateState', 'error', 'آدرس به‌روزرسانی معتبر نیست.');
+        return;
+      }
+      try {
+        const target = `${FileSystem.cacheDirectory}hooman-finance-update.apk`;
+        await FileSystem.deleteAsync(target, { idempotent: true });
+        let lastPct = -1;
+        const dl = FileSystem.createDownloadResumable(url, target, {}, (p) => {
+          const pct = p.totalBytesExpectedToWrite > 0 ? Math.floor((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100) : 0;
+          if (pct !== lastPct) {
+            lastPct = pct;
+            call('__updateProgress', pct);
+          }
+        });
+        const out = await dl.downloadAsync();
+        if (!out || out.status !== 200) throw new Error('download');
+        const uri = await FileSystem.getContentUriAsync(out.uri);
+        call('__updateState', 'installing', '');
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: uri,
+          flags: 1,
+          type: 'application/vnd.android.package-archive',
+        });
+      } catch {
+        call('__updateState', 'error', 'دانلود یا نصب انجام نشد. اینترنت و فضای گوشی را بررسی کنید.');
+      }
+    },
+    [call],
+  );
+
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
       let msg: { type?: string; id?: string; url?: string };
@@ -30,6 +100,14 @@ export default function App() {
       }
       if (msg.type === 'exit') {
         BackHandler.exitApp();
+        return;
+      }
+      if (msg.type === 'update-check') {
+        void checkUpdate();
+        return;
+      }
+      if (msg.type === 'update-install' && msg.url) {
+        void installUpdate(msg.url);
         return;
       }
       if (msg.type === 'fetch' && msg.id && msg.url) {
@@ -51,7 +129,7 @@ export default function App() {
         }
       }
     },
-    [reply],
+    [reply, checkUpdate, installUpdate],
   );
 
   useEffect(() => {

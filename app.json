@@ -9,7 +9,8 @@
       "package": "com.hooman.finance",
       "versionCode": 1,
       "permissions": [
-        "INTERNET"
+        "INTERNET",
+        "REQUEST_INSTALL_PACKAGES"
       ],
       "backgroundColor": "#0b1f3a"
     },
@@ -18,6 +19,9 @@
     "splash": {
       "backgroundColor": "#0b1f3a",
       "resizeMode": "contain"
+    },
+    "extra": {
+      "build": 0
     }
   }
 }

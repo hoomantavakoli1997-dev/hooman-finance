@@ -288,6 +288,11 @@ function viewHome(pf: Portfolio): string {
     </div>
     <h2 class="section-title"><span>دارایی‌ها</span><button class="btn small ghost" data-action="refresh">به‌روزرسانی قیمت‌ها</button></h2>
     <div class="list">${rows.join('')}</div>
+    ${
+      inApp() && upd.status === 'available'
+        ? '<div class="note info"><span>نسخه‌ی جدید برنامه آماده است.</span><button class="btn" data-action="update-install">دانلود و نصب</button></div>'
+        : ''
+    }
     ${marketSection()}`;
 }
 
@@ -880,6 +885,26 @@ function seg(action: string, cur: string, opts: [string, string][]): string {
     .join('')}</div>`;
 }
 
+function updateSection(): string {
+  if (!inApp()) return '';
+  const mb = (b: number) => (b ? ` (${toFa((b / 1048576).toFixed(0))} مگابایت)` : '');
+  let body: string;
+  switch (upd.status) {
+    case 'checking': body = '<span>در حال بررسی…</span>'; break;
+    case 'none': body = '<span>برنامه‌ی شما به‌روز است.</span><button class="btn link" data-action="update-check">بررسی دوباره</button>'; break;
+    case 'available':
+      body = `<span>نسخه‌ی جدید آماده است${mb(upd.size)}. داده‌های شما پاک نمی‌شود.</span>
+        <button class="btn" data-action="update-install">دانلود و نصب</button>`;
+      break;
+    case 'downloading': body = '<span>در حال دانلود: <b id="upd-pct">' + toFa(String(upd.pct)) + '٪</b></span>'; break;
+    case 'installing': body = '<span>صفحه‌ی نصب باز شد. گزینه‌ی «نصب» یا «به‌روزرسانی» را بزنید.</span>'; break;
+    case 'error': body = `<span class="loss">${esc(upd.error)}</span><button class="btn link" data-action="update-check">تلاش دوباره</button>`; break;
+    default: body = '<button class="btn ghost" data-action="update-check">بررسی به‌روزرسانی</button>';
+  }
+  return `<h2 class="section-title">به‌روزرسانی برنامه</h2>
+    <div class="note info">${body}</div>`;
+}
+
 function viewSettings(): string {
   const s = store.settings;
   return `${header('تنظیمات')}
@@ -890,6 +915,7 @@ function viewSettings(): string {
     <h2 class="section-title">قیمت خودکار</h2>
     <div class="note info"><span>منبع: TGJU (طلا ۱۸ عیار، دلار، تتر). قیمت قدیمی، صفر یا جهش مشکوک رد می‌شود و آخرین قیمت معتبر می‌ماند.</span>
       <button class="btn link" data-action="paste-open">چسباندن پاسخ TGJU (برای امتحان)</button></div>
+    ${updateSection()}
     <h2 class="section-title">داده‌ها</h2>
     <div class="actions">
       <button class="btn ghost" data-action="ask" data-v="reset">بازگشت به داده‌ی آزمایشی</button>
@@ -966,7 +992,20 @@ interface TxForm {
   error: string;
 }
 interface PriceForm { assetId: string; price: string; error: string }
-interface AssetForm { name: string; unit: string; decimals: string; error: string }
+interface AssetForm { name: string; unit: string; decimals: string; preset: string; error: string }
+
+/** انواع آماده‌ی دارایی برای پر شدن خودکار واحد و رقم اعشار */
+const ASSET_PRESETS: Record<string, { label: string; unit: string; decimals: string; kind: Asset['kind'] }> = {
+  stock_ir: { label: 'سهام بورس ایران', unit: 'سهم', decimals: '0', kind: 'custom' },
+  stock_world: { label: 'سهام یا صندوق خارجی', unit: 'سهم', decimals: '4', kind: 'custom' },
+  crypto: { label: 'رمزارز', unit: 'عدد', decimals: '6', kind: 'crypto' },
+  metal: { label: 'فلز یا سکه', unit: 'گرم', decimals: '3', kind: 'metal' },
+  currency: { label: 'ارز', unit: 'واحد', decimals: '2', kind: 'currency' },
+  other: { label: 'سایر (ملک، خودرو، …)', unit: 'عدد', decimals: '0', kind: 'custom' },
+};
+
+/** اگر فرم دارایی از داخل فرم معامله باز شده باشد، پس از ذخیره/انصراف به همان فرم برمی‌گردیم */
+let pendingTx: TxForm | null = null;
 type Modal =
   | { kind: 'tx'; f: TxForm }
   | { kind: 'price'; f: PriceForm }
@@ -982,6 +1021,7 @@ let modal: Modal = null;
 
 function closeModal() {
   modal = null;
+  pendingTx = null;
   modalEl.innerHTML = '';
 }
 
@@ -1088,6 +1128,7 @@ function txFormHtml(f: TxForm): string {
   const assetOpts = [
     ...store.assets.map((a) => `<option value="${esc(a.id)}" ${a.id === f.assetId ? 'selected' : ''}>${esc(a.name)}</option>`),
     `<option value="${CASH_ID}" ${cash ? 'selected' : ''}>وجه نقد</option>`,
+    '<option value="__new">＋ دارایی جدید (سهام، رمزارز، …)</option>',
   ].join('');
   const totalLabel = f.type === 'sell' ? 'دریافتی خالص' : f.type === 'buy' ? 'هزینه‌ی کل با کارمزد' : f.type === 'receive' ? 'ارزش دریافتی' : 'مبلغ';
   return sheet(`
@@ -1208,10 +1249,15 @@ function renderModal() {
         <button class="btn ghost" data-action="close">انصراف</button></div>`);
   } else if (modal.kind === 'asset') {
     const assetDecimals = modal.f.decimals;
+    const presetSel = modal.f.preset;
     modalEl.innerHTML = sheet(`<h2>افزودن دارایی</h2>
-      <div class="note info"><span>برای نقره، سکه، ارزها و رمزارزها بهتر است از «نمای بازار» روی همان قیمت بزنید و «افزودن به دارایی‌ها» را انتخاب کنید تا قیمت خودکار هم وصل شود. اینجا برای مواردی است که قیمت را خودتان وارد می‌کنید (مثلاً سهام بورس).</span></div>
-      <div class="field"><label for="a-name">نام دارایی</label><input id="a-name" data-field="name" value="${esc(modal.f.name)}" autocomplete="off"></div>
-      <div class="field"><label for="a-unit">واحد اندازه‌گیری (مثلاً گرم، عدد، دلار)</label><input id="a-unit" data-field="unit" value="${esc(modal.f.unit)}" autocomplete="off"></div>
+      <div class="note info"><span>قیمت هر دارایی را بعد از افزودن، با «ثبت قیمت» خودتان وارد می‌کنید. برای نقره، سکه، ارزها و رمزارزها بهتر است از «نمای بازار» روی همان قیمت بزنید تا قیمت خودکار هم وصل شود. قیمت همه‌ی دارایی‌ها به ریال یا تومان ثبت می‌شود (برای سهام خارجی، معادل تومانی را وارد کنید).</span></div>
+      <div class="field"><label for="a-preset">نوع دارایی</label>
+        <select id="a-preset" data-field="preset">${Object.entries(ASSET_PRESETS)
+          .map(([k, v]) => `<option value="${k}" ${k === presetSel ? 'selected' : ''}>${esc(v.label)}</option>`)
+          .join('')}</select></div>
+      <div class="field"><label for="a-name">نام دارایی (مثلاً فملی)</label><input id="a-name" data-field="name" value="${esc(modal.f.name)}" autocomplete="off"></div>
+      <div class="field"><label for="a-unit">واحد شمارش (مثلاً سهم، گرم، عدد)</label><input id="a-unit" data-field="unit" value="${esc(modal.f.unit)}" autocomplete="off"></div>
       <div class="field"><label for="a-dec">حداکثر رقم اعشار مقدار</label>
         <select id="a-dec" data-field="decimals">${[0, 1, 2, 3, 4, 6, 8]
           .map((n) => `<option value="${n}" ${String(n) === assetDecimals ? 'selected' : ''}>${toFa(String(n))}</option>`)
@@ -1419,7 +1465,7 @@ document.addEventListener('click', (ev) => {
       }
       break;
     case 'add-asset':
-      modal = { kind: 'asset', f: { name: '', unit: '', decimals: '2', error: '' } };
+      modal = { kind: 'asset', f: { name: '', unit: 'سهم', decimals: '0', preset: 'stock_ir', error: '' } };
       renderModal();
       break;
     case 'asset-save': {
@@ -1430,8 +1476,23 @@ document.addEventListener('click', (ev) => {
       if (!name) return setErr('نام دارایی را وارد کنید.');
       if (!unit) return setErr('واحد اندازه‌گیری را وارد کنید.');
       if (store.assets.some((a) => a.name === name)) return setErr('دارایی با این نام وجود دارد.');
-      store.assets.push({ id: `a${Date.now().toString(36)}`, name, unit, kind: 'custom', decimals: Number(f.decimals) });
+      const newAsset: Asset = {
+        id: `a${Date.now().toString(36)}`, name, unit, kind: ASSET_PRESETS[f.preset]?.kind ?? 'custom', decimals: Number(f.decimals),
+      };
+      store.assets.push(newAsset);
       save();
+      if (pendingTx) {
+        // برگشت به فرم معامله با دارایی تازه
+        const back = pendingTx;
+        pendingTx = null;
+        back.assetId = newAsset.id;
+        back.price = '';
+        back.error = '';
+        modal = { kind: 'tx', f: back };
+        renderModal();
+        toast('دارایی اضافه شد. مقدار و قیمت خرید را وارد کنید.');
+        break;
+      }
       closeModal();
       render();
       toast('دارایی اضافه شد. حالا می‌توانید خرید ثبت کنید.');
@@ -1511,6 +1572,15 @@ document.addEventListener('click', (ev) => {
       toast('به دارایی‌ها اضافه شد. برای قیمت روز، «به‌روزرسانی قیمت‌ها» را بزنید یا قیمت را دستی وارد کنید.');
       break;
     }
+    case 'update-check':
+      checkUpdate();
+      break;
+    case 'update-install':
+      upd.status = 'downloading';
+      upd.pct = 0;
+      toNative({ type: 'update-install', url: upd.url });
+      render();
+      break;
     case 'open-person':
       view.person = v;
       render();
@@ -1602,7 +1672,11 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'close':
-      closeModal();
+      if (pendingTx && modal?.kind === 'asset') {
+        modal = { kind: 'tx', f: pendingTx };
+        pendingTx = null;
+        renderModal();
+      } else closeModal();
       break;
     default:
   }
@@ -1666,6 +1740,56 @@ bridgeWindow.__hwBack = () => {
   } else rn?.postMessage(JSON.stringify({ type: 'exit' }));
 };
 
+/* --- به‌روزرسانی درون‌برنامه‌ای (فقط داخل اپ اندروید) --- */
+interface UpdateState {
+  status: 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'installing' | 'error';
+  current: number; latest: number; url: string; size: number; notes: string; pct: number; error: string;
+}
+const upd: UpdateState = { status: 'idle', current: 0, latest: 0, url: '', size: 0, notes: '', pct: 0, error: '' };
+const inApp = () => !!(window as unknown as { ReactNativeWebView?: RNBridge }).ReactNativeWebView;
+function toNative(msg: object) {
+  (window as unknown as { ReactNativeWebView?: RNBridge }).ReactNativeWebView?.postMessage(JSON.stringify(msg));
+}
+function checkUpdate() {
+  if (!inApp()) return;
+  upd.status = 'checking';
+  upd.error = '';
+  toNative({ type: 'update-check' });
+  if (view.tab === 'settings') render();
+}
+Object.assign(window, {
+  __updateReply: (r: { ok: boolean; current: number; latest: number; url: string; size: number; notes: string; error: string }) => {
+    upd.current = r.current;
+    if (!r.ok) {
+      upd.status = 'error';
+      upd.error = r.error;
+    } else if (r.latest > r.current && r.url) {
+      Object.assign(upd, { status: 'available', latest: r.latest, url: r.url, size: r.size, notes: r.notes });
+    } else upd.status = 'none';
+    try { localStorage.setItem('hooman-finance-lastcheck', String(Date.now())); } catch { /* ignore */ }
+    if (!modal) render();
+  },
+  __updateProgress: (pct: number) => {
+    upd.status = 'downloading';
+    upd.pct = pct;
+    const el = document.getElementById('upd-pct');
+    if (el) el.textContent = toFa(String(pct)) + '٪';
+    else if (!modal) render();
+  },
+  __updateState: (status: UpdateState['status'], error: string) => {
+    upd.status = status;
+    upd.error = error;
+    if (!modal) render();
+  },
+});
+/** بررسی خودکار حداکثر روزی یک بار، هنگام باز شدن برنامه */
+function autoCheckUpdate() {
+  if (!inApp()) return;
+  let last = 0;
+  try { last = Number(localStorage.getItem('hooman-finance-lastcheck') ?? '0'); } catch { /* ignore */ }
+  if (Date.now() - last > 24 * 3600e3) window.setTimeout(checkUpdate, 1500);
+}
+
 let refreshing = false;
 async function runRefresh() {
   if (refreshing) return;
@@ -1720,6 +1844,18 @@ document.addEventListener('input', (ev) => {
 
 document.addEventListener('change', (ev) => {
   const t = ev.target as HTMLSelectElement;
+  if (t.dataset?.field === 'assetId' && modal?.kind === 'tx' && t.value === '__new') {
+    pendingTx = modal.f;
+    modal = { kind: 'asset', f: { name: '', unit: 'سهم', decimals: '0', preset: 'stock_ir', error: '' } };
+    renderModal();
+    return;
+  }
+  if (t.dataset?.field === 'preset' && modal?.kind === 'asset') {
+    const pr = ASSET_PRESETS[t.value];
+    if (pr) Object.assign(modal.f, { preset: t.value, unit: pr.unit, decimals: pr.decimals });
+    renderModal();
+    return;
+  }
   if (t.dataset?.field === 'assetId' && modal?.kind === 'tx') {
     modal.f.assetId = t.value;
     const cash = t.value === CASH_ID;
@@ -1735,3 +1871,4 @@ document.addEventListener('keydown', (ev) => {
 });
 
 render();
+autoCheckUpdate();
