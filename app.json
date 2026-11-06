@@ -10,8 +10,14 @@
       "versionCode": 1,
       "permissions": [
         "INTERNET"
-      ]
+      ],
+      "backgroundColor": "#0b1f3a"
     },
-    "plugins": []
+    "plugins": [],
+    "backgroundColor": "#0b1f3a",
+    "splash": {
+      "backgroundColor": "#0b1f3a",
+      "resizeMode": "contain"
+    }
   }
 }
