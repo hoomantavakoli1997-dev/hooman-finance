@@ -1,6 +1,8 @@
 name: Build Android APK
 on:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -19,3 +21,11 @@ jobs:
         with:
           name: hooman-finance-apk
           path: android/app/build/outputs/apk/release/*.apk
+      - name: Publish APK as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/*.apk hooman-finance.apk
+          gh release create "apk-${{ github.run_number }}" hooman-finance.apk \
+            --title "Hooman Finance APK #${{ github.run_number }}" \
+            --notes "نسخه‌ی آزمایشی اندروید (ساخته‌شده از شاخه‌ی main)."
