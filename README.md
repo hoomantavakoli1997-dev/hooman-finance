@@ -16,7 +16,7 @@
 ## اجرا
 ```
 npm install
-npm test            # تست‌های هسته (68 tests)
+npm test            # تست‌های هسته (73 tests)
 npm run web:build   # ساخت web/dist/index.html
 ```
 

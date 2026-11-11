@@ -12,6 +12,8 @@ import appHtml from './src/native/appHtml';
  * - درخواست قیمت (TGJU) از طریق fetch بومی انجام می‌شود تا محدودیت CORS مرورگر وجود نداشته باشد.
  */
 const TGJU_HOST = 'https://call.tgju.org/';
+/** فقط این آدرس‌ها برای دریافت قیمت مجازند */
+const ALLOWED_FETCH = [TGJU_HOST, 'https://cdn.tsetmc.com/api/'];
 /** مخزنی که نسخه‌های APK در بخش Releases آن منتشر می‌شود (باید عمومی باشد) */
 const UPDATE_REPO = 'hoomantavakoli1997-dev/hooman-finance';
 /** شماره‌ی ساخت همین نسخه؛ هنگام ساخت در GitHub Actions در app.json قرار می‌گیرد */
@@ -112,7 +114,7 @@ export default function App() {
       }
       if (msg.type === 'fetch' && msg.id && msg.url) {
         // فقط منبع قیمت مجاز است
-        if (!msg.url.startsWith(TGJU_HOST)) {
+        if (!ALLOWED_FETCH.some((h) => msg.url!.startsWith(h))) {
           reply(msg.id, false, 0, '', 'این آدرس مجاز نیست.');
           return;
         }

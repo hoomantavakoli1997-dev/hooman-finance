@@ -4,6 +4,8 @@ import {
   ChangeResult, Portfolio, TxDraft, parseDec,
 } from '../src/core/engine';
 import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
+import { assetIcon, iconKind, iconSvg } from './icons';
+import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
 import { DEFAULT_PRICE_KEYS, PriceResult, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
 import {
   CATEGORIES, CategoryId, MarketEntry, classify, isStale, parseMarket, searchMarket, snapshotTime,
@@ -244,6 +246,116 @@ function sampleNote(): string {
 
 /* -------------------------------- خانه -------------------------------- */
 
+/** درصد با یک رقم اعشار و ارقام فارسی */
+function pctText(p: number): string {
+  if (p > 0 && p < 0.05) return 'کمتر از ۰٫۱٪';
+  return toFa(p.toFixed(1)).replace('.', '٫') + '٪';
+}
+
+interface Slice { key: string; label: string; value: Decimal; color: string }
+
+/** نمودار سهم هر بخش از کل سرمایه‌ی مثبت (نقد، دارایی‌ها، طلب‌ها). بدهی‌ها جدا نوشته می‌شود. */
+function allocationSection(pf: Portfolio, ppl: { receivable: Decimal; payable: Decimal }): string {
+  const raw: { key: string; label: string; value: Decimal }[] = [];
+  if (pf.cash.gt(0)) raw.push({ key: 'cash', label: 'وجه نقد', value: pf.cash });
+  for (const a of pf.assets) if (a.value && a.value.gt(0)) raw.push({ key: a.asset.id, label: a.asset.name, value: a.value });
+  if (ppl.receivable.gt(0)) raw.push({ key: 'recv', label: 'طلب از اشخاص', value: ppl.receivable });
+  const total = raw.reduce((t, x) => t.plus(x.value), Decimal.ZERO);
+  if (raw.length === 0 || total.lte(0)) return '';
+  // حداکثر ۸ رنگ؛ بقیه در «سایر» جمع می‌شوند (بزرگ‌ترین‌ها جدا می‌مانند)
+  const sorted = [...raw].sort((a, b) => b.value.cmp(a.value));
+  const keep = sorted.length > 8 ? sorted.slice(0, 7) : sorted;
+  const rest = sorted.length > 8 ? sorted.slice(7) : [];
+  const slices: Slice[] = keep.map((x) => ({ ...x, color: '' }));
+  if (rest.length) {
+    slices.push({ key: 'other', label: `سایر (${toFa(String(rest.length))} مورد)`, value: rest.reduce((t, x) => t.plus(x.value), Decimal.ZERO), color: '' });
+  }
+  // رنگ بر اساس هویت (ترتیب ثابت ثبت)، نه رتبه: با تغییر قیمت‌ها رنگ هر دارایی عوض نمی‌شود
+  const order = raw.map((x) => x.key);
+  slices.forEach((sl) => {
+    sl.color = sl.key === 'other' ? 'var(--c-other)' : `var(--c${(order.indexOf(sl.key) % 8) + 1})`;
+  });
+  const fracs = slices.map((sl) => sl.value.div(total).toNumber() * 100);
+  const iconFor = (sl: Slice): string => {
+    if (sl.key === 'cash') return `<span class="ico sm">${iconSvg({ t: 'cash' })}</span>`;
+    if (sl.key === 'recv') return `<span class="ico sm">${iconSvg({ t: 'people' })}</span>`;
+    const asset = store.assets.find((x) => x.id === sl.key);
+    return asset ? `<span class="ico sm">${iconSvg(iconKind(asset))}</span>` : '';
+  };
+  const list = slices
+    .map(
+      (sl, i) => `<div class="ab">
+        <div class="ah"><span class="nm">${iconFor(sl)}<span class="tx">${esc(sl.label)}</span></span><span class="pc">${pctText(fracs[i])}</span></div>
+        <div class="track" role="img" aria-label="${esc(sl.label)}: ${pctText(fracs[i])}"><i style="width:${Math.max(fracs[i], 1).toFixed(2)}%;background:${sl.color}"></i></div>
+        <div class="am">${money(sl.value)}</div></div>`,
+    )
+    .join('');
+  const debtNote = ppl.payable.gt(0)
+    ? `<div class="hint">بدهی‌های شما (${money(ppl.payable)}) در این نمودار نیست؛ معادل ${pctText(ppl.payable.div(total).toNumber() * 100)} از جمع بالاست.</div>`
+    : '';
+  const missing = pf.missingPrice.length
+    ? `<div class="hint">برای ${toFa(String(pf.missingPrice.length))} دارایی قیمت روز ثبت نشده و در نمودار نیامده است.</div>`
+    : '';
+  return `<h2 class="section-title"><span>سهم هر دارایی از سرمایه</span></h2>
+    <section class="alloc" aria-label="سهم هر دارایی از سرمایه">${list}</section>${debtNote}${missing}`;
+}
+
+function stockSearchHtml(f: AssetForm): string {
+  const hits = f.hits
+    .map((h, i) => `<button class="row" data-action="stock-pick" data-v="${i}"><div class="main"><span class="t">${esc(h.symbol)}</span><span class="s">${esc(h.name)}</span></div></button>`)
+    .join('');
+  return `<h2 class="section-title"><span>اتصال به بورس (قیمت خودکار)</span></h2>
+    ${inApp() ? '' : '<div class="note warn"><span>جست‌وجوی خودکار فقط در اپ اندروید کار می‌کند. در این نسخه‌ی آزمایشی می‌توانید کد نماد را دستی وارد کنید.</span></div>'}
+    <div class="field"><label for="a-q">نام نماد را بنویسید (مثلاً فملی)</label>
+      <div class="inline"><input id="a-q" data-field="q" value="${esc(f.q)}" autocomplete="off">
+      <button class="btn small" data-action="stock-search" ${f.busy ? 'disabled' : ''}>${f.busy ? 'در حال جست‌وجو…' : 'جست‌وجو'}</button></div></div>
+    ${hits ? `<div class="list">${hits}</div>` : ''}
+    <div class="field"><label for="a-ins">کد نماد در TSETMC (خودکار پر می‌شود)</label>
+      <div class="inline"><input id="a-ins" data-field="insCode" inputmode="numeric" value="${esc(f.insCode)}" autocomplete="off">
+      <button class="btn small ghost" data-action="stock-test" ${f.busy ? 'disabled' : ''}>قیمت آزمایشی</button></div>
+      <span class="hint">${f.preview ? esc(f.preview) : 'با «قیمت آزمایشی» آخرین قیمت را ببینید و با سایت بورس مقایسه کنید.'}</span></div>`;
+}
+
+/** قیمت آزمایشی نماد برای تطبیق با سایت بورس؛ هیچ قیمتی ذخیره نمی‌شود */
+async function stockPreview(f: AssetForm) {
+  if (!isInsCode(f.insCode)) {
+    f.preview = 'کد نماد معتبر نیست (فقط رقم).';
+    renderModal();
+    return;
+  }
+  f.busy = true;
+  f.preview = '';
+  renderModal();
+  try {
+    const res = await nativeFetch(quoteUrl(f.insCode));
+    if (!res.ok) throw new Error(`پاسخ نامعتبر از سرور (${res.status}).`);
+    const q = parseClosingInfo(await res.text(), f.insCode);
+    f.preview = `آخرین معامله: ${fmtNum(fromRial(q.price))} ${unitLabel()} — ${formatJalali(q.at.slice(0, 10))} ساعت ${q.at.slice(11, 16)}`;
+  } catch (e) {
+    f.preview = e instanceof Error ? e.message : 'دریافت قیمت انجام نشد.';
+  }
+  f.busy = false;
+  if (modal?.kind === 'asset' && modal.f === f) renderModal();
+}
+
+async function runStockSearch(f: AssetForm) {
+  if (!f.q.trim()) return setErr('نام نماد را بنویسید.');
+  if (!inApp()) return setErr('جست‌وجوی خودکار فقط در اپ اندروید کار می‌کند؛ کد نماد را دستی وارد کنید.');
+  f.busy = true;
+  f.error = '';
+  renderModal();
+  try {
+    const res = await nativeFetch(searchUrl(f.q));
+    if (!res.ok) throw new Error(`پاسخ نامعتبر از سرور (${res.status}).`);
+    f.hits = parseSearch(await res.text()).slice(0, 8);
+    if (f.hits.length === 0) f.error = 'نمادی با این نام پیدا نشد.';
+  } catch (e) {
+    f.error = e instanceof Error ? e.message : 'جست‌وجو انجام نشد.';
+  }
+  f.busy = false;
+  if (modal?.kind === 'asset' && modal.f === f) renderModal();
+}
+
 function viewHome(pf: Portfolio): string {
   const assetsValue = pf.assets.reduce((s, a) => (a.value ? s.plus(a.value) : s), Decimal.ZERO);
   const total = pf.totalValue;
@@ -263,7 +375,7 @@ function viewHome(pf: Portfolio): string {
       ? `<span class="t">${money(a.value)}</span><span class="s">${pnl(a.unrealized)}</span>`
       : `<span class="s">قیمت روز ثبت نشده</span>`;
     rows.push(`<button class="row" data-action="open-asset" data-v="${esc(a.asset.id)}">
-      <div class="main"><span class="t">${esc(a.asset.name)}</span>
+      ${assetIcon(a.asset)}<div class="main"><span class="t">${esc(a.asset.name)}</span>
       <span class="s">${qty(a.state.quantity, a.asset)}</span>
       <div class="bar" aria-hidden="true"><i style="width:${a.value ? pct(a.value) : '0'}%"></i></div></div>
       <div class="side">${side}</div></button>`);
@@ -285,6 +397,7 @@ function viewHome(pf: Portfolio): string {
            <button class="btn link" data-action="price" data-v="${esc(pf.missingPrice[0])}">ثبت قیمت روز</button></div>`
         : ''
     }
+    ${allocationSection(pf, ppl)}
     <div class="grid2">
       <div class="tile"><span class="k">سود یا زیان فروش‌ها (تحقق‌یافته)</span><span class="v">${pnl(pf.realizedTotal)}</span></div>
       <div class="tile"><span class="k">سود یا زیان دارایی‌های فعلی</span><span class="v">${pnl(pf.unrealizedTotal)}</span></div>
@@ -427,13 +540,13 @@ function viewAssets(pf: Portfolio): string {
           ? `<span class="s">موجودی صفر</span>`
           : `<span class="s">بدون قیمت روز</span>`;
       return `<button class="row" data-action="open-asset" data-v="${esc(a.asset.id)}">
-        <div class="main"><span class="t">${esc(a.asset.name)}</span><span class="s">${qty(a.state.quantity, a.asset)}</span></div>
+        ${assetIcon(a.asset)}<div class="main"><span class="t">${esc(a.asset.name)}</span><span class="s">${qty(a.state.quantity, a.asset)}</span></div>
         <div class="side">${side}</div></button>`;
     })
     .join('');
   return `${header('دارایی‌ها')}
     <div class="list">
-      <div class="row"><div class="main"><span class="t">وجه نقد</span><span class="s">جدا از دارایی‌ها؛ با واریز و برداشت (و وام‌هایی که «از وجه نقد» ثبت شده‌اند) تغییر می‌کند</span></div>
+      <div class="row">${assetIcon({ id: CASH_ID, name: 'وجه نقد' })}<div class="main"><span class="t">وجه نقد</span><span class="s">جدا از دارایی‌ها؛ با واریز و برداشت تغییر می‌کند</span></div>
         <div class="side"><span class="t">${money(pf.cash)}</span></div></div>
       ${rows}
     </div>
@@ -465,7 +578,7 @@ function viewAssetDetail(id: string, pf: Portfolio): string {
     : `<span class="v muted">ثبت نشده</span><span class="k">هیچ قیمتی حدس زده نمی‌شود</span>`;
   return `<div class="top"><button class="back" data-action="back">← دارایی‌ها</button></div>
     <section class="hero">
-      <span class="label">${esc(asset.name)}</span>
+      <span class="label" style="display:flex;align-items:center;gap:.6rem">${assetIcon(asset)}${esc(asset.name)}</span>
       <div class="big">${ltr(fmtNum(state.quantity, asset.decimals))}<span class="u">${esc(asset.unit)}</span></div>
       <div class="split"><span>ارزش روز: <b>${value ? money(value) : '—'}</b></span></div>
     </section>
@@ -1000,7 +1113,14 @@ interface TxForm {
   error: string;
 }
 interface PriceForm { assetId: string; price: string; error: string }
-interface AssetForm { name: string; unit: string; decimals: string; preset: string; error: string }
+interface AssetForm {
+  name: string; unit: string; decimals: string; preset: string; error: string;
+  /** سهام بورس ایران: عبارت جست‌وجو، نتیجه‌ها، کد نماد در TSETMC و پیش‌نمایش قیمت */
+  q: string; hits: InstrumentHit[]; insCode: string; preview: string; busy: boolean;
+}
+const newAssetForm = (): AssetForm => ({
+  name: '', unit: 'سهم', decimals: '0', preset: 'stock_ir', error: '', q: '', hits: [], insCode: '', preview: '', busy: false,
+});
 
 /** انواع آماده‌ی دارایی برای پر شدن خودکار واحد و رقم اعشار */
 const ASSET_PRESETS: Record<string, { label: string; unit: string; decimals: string; kind: Asset['kind'] }> = {
@@ -1264,6 +1384,7 @@ function renderModal() {
         <select id="a-preset" data-field="preset">${Object.entries(ASSET_PRESETS)
           .map(([k, v]) => `<option value="${k}" ${k === presetSel ? 'selected' : ''}>${esc(v.label)}</option>`)
           .join('')}</select></div>
+      ${modal.f.preset === 'stock_ir' ? stockSearchHtml(modal.f) : ''}
       <div class="field"><label for="a-name">نام دارایی (مثلاً فملی)</label><input id="a-name" data-field="name" value="${esc(modal.f.name)}" autocomplete="off"></div>
       <div class="field"><label for="a-unit">واحد شمارش (مثلاً سهم، گرم، عدد)</label><input id="a-unit" data-field="unit" value="${esc(modal.f.unit)}" autocomplete="off"></div>
       <div class="field"><label for="a-dec">حداکثر رقم اعشار مقدار</label>
@@ -1473,7 +1594,7 @@ document.addEventListener('click', (ev) => {
       }
       break;
     case 'add-asset':
-      modal = { kind: 'asset', f: { name: '', unit: 'سهم', decimals: '0', preset: 'stock_ir', error: '' } };
+      modal = { kind: 'asset', f: newAssetForm() };
       renderModal();
       break;
     case 'asset-save': {
@@ -1487,6 +1608,10 @@ document.addEventListener('click', (ev) => {
       const newAsset: Asset = {
         id: `a${Date.now().toString(36)}`, name, unit, kind: ASSET_PRESETS[f.preset]?.kind ?? 'custom', decimals: Number(f.decimals),
       };
+      if (f.preset === 'stock_ir' && f.insCode.trim()) {
+        if (!isInsCode(f.insCode.trim())) return setErr('کد نماد معتبر نیست (فقط رقم).');
+        newAsset.priceKeys = { tsetmc: f.insCode.trim() };
+      }
       store.assets.push(newAsset);
       save();
       if (pendingTx) {
@@ -1585,6 +1710,23 @@ document.addEventListener('click', (ev) => {
       toast('به دارایی‌ها اضافه شد. برای قیمت روز، «به‌روزرسانی قیمت‌ها» را بزنید یا قیمت را دستی وارد کنید.');
       break;
     }
+    case 'stock-search':
+      if (modal?.kind === 'asset') void runStockSearch(modal.f);
+      break;
+    case 'stock-pick': {
+      if (modal?.kind !== 'asset') break;
+      const h = modal.f.hits[Number(v)];
+      if (!h) break;
+      modal.f.name = h.symbol;
+      modal.f.insCode = h.insCode;
+      modal.f.hits = [];
+      modal.f.error = '';
+      void stockPreview(modal.f);
+      break;
+    }
+    case 'stock-test':
+      if (modal?.kind === 'asset') void stockPreview(modal.f);
+      break;
     case 'update-check':
       checkUpdate();
       break;
@@ -1809,9 +1951,12 @@ async function runRefresh() {
   refreshing = true;
   toast('در حال دریافت قیمت‌ها…');
   try {
-    const out = await refreshPrices(store.assets, store.prices, [tgjuProvider((u) => nativeFetch(u), undefined, undefined, (raw) => {
+    const providers = [tgjuProvider((u) => nativeFetch(u), undefined, undefined, (raw) => {
       store.market = { source: 'tgju', entries: parseMarket(raw) };
-    })], { now: Date.now() });
+    })];
+    const stockCodes = store.assets.map((a) => a.priceKeys?.tsetmc).filter((c): c is string => !!c);
+    if (stockCodes.length) providers.push(tsetmcProvider((u) => nativeFetch(u), stockCodes));
+    const out = await refreshPrices(store.assets, store.prices, providers, { now: Date.now() });
     showPriceResults(out.prices, out.results, out.errors);
   } finally {
     refreshing = false;
@@ -1859,7 +2004,7 @@ document.addEventListener('change', (ev) => {
   const t = ev.target as HTMLSelectElement;
   if (t.dataset?.field === 'assetId' && modal?.kind === 'tx' && t.value === '__new') {
     pendingTx = modal.f;
-    modal = { kind: 'asset', f: { name: '', unit: 'سهم', decimals: '0', preset: 'stock_ir', error: '' } };
+    modal = { kind: 'asset', f: newAssetForm() };
     renderModal();
     return;
   }
