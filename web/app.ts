@@ -1006,6 +1006,9 @@ function seg(action: string, cur: string, opts: [string, string][]): string {
     .join('')}</div>`;
 }
 
+const SUPPORT_ID = '@Hooman_tavakoli75';
+const SUPPORT_URL = 'https://t.me/Hooman_tavakoli75';
+
 function updateSection(): string {
   if (!inApp()) return '';
   const mb = (b: number) => (b ? ` (${toFa((b / 1048576).toFixed(0))} مگابایت)` : '');
@@ -1037,6 +1040,15 @@ function viewSettings(): string {
     <div class="note info"><span>منبع: TGJU (طلا ۱۸ عیار، دلار، تتر). قیمت قدیمی، صفر یا جهش مشکوک رد می‌شود و آخرین قیمت معتبر می‌ماند.</span>
       <button class="btn link" data-action="paste-open">چسباندن پاسخ TGJU (برای امتحان)</button></div>
     ${updateSection()}
+    <h2 class="section-title">پشتیبانی</h2>
+    <div class="note info">
+      <span>برای پرسش، گزارش خطا یا پیشنهاد، در تلگرام پیام بدهید:</span>
+      <b dir="ltr" style="font-size:1.1rem;user-select:all">${SUPPORT_ID}</b>
+      <div class="actions">
+        <a class="btn" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer" data-action="support-open">باز کردن تلگرام</a>
+        <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
+      </div>
+    </div>
     <h2 class="section-title">داده‌ها</h2>
     <div class="actions">
       <button class="btn ghost" data-action="ask" data-v="reset">بازگشت به داده‌ی آزمایشی</button>
@@ -1726,6 +1738,19 @@ document.addEventListener('click', (ev) => {
     }
     case 'stock-test':
       if (modal?.kind === 'asset') void stockPreview(modal.f);
+      break;
+    case 'support-open':
+      // داخل اپ، وب‌ویو نباید خودش به صفحه‌ی بیرونی برود؛ باز کردن را به اندروید می‌سپاریم
+      if (inApp()) {
+        ev.preventDefault();
+        toNative({ type: 'open', url: SUPPORT_URL });
+      }
+      break;
+    case 'support-copy':
+      navigator.clipboard?.writeText(SUPPORT_ID).then(
+        () => toast('شناسه کپی شد.'),
+        () => toast(`شناسه‌ی پشتیبانی: ${SUPPORT_ID}`),
+      ) ?? toast(`شناسه‌ی پشتیبانی: ${SUPPORT_ID}`);
       break;
     case 'update-check':
       checkUpdate();

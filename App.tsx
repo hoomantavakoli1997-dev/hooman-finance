@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { BackHandler, Platform, StatusBar, View } from 'react-native';
+import { BackHandler, Linking, Platform, StatusBar, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system';
@@ -102,6 +102,11 @@ export default function App() {
       }
       if (msg.type === 'exit') {
         BackHandler.exitApp();
+        return;
+      }
+      if (msg.type === 'open' && msg.url) {
+        // فقط پیوند پشتیبانی (تلگرام) از داخل برنامه باز می‌شود
+        if (msg.url.startsWith('https://t.me/')) void Linking.openURL(msg.url).catch(() => undefined);
         return;
       }
       if (msg.type === 'update-check') {
