@@ -55,6 +55,8 @@ export function parseSearch(raw: string | unknown): InstrumentHit[] {
     const o = it as Record<string, unknown>;
     const insCode = String(o.insCode ?? '');
     const symbol = typeof o.lVal18AFC === 'string' ? o.lVal18AFC : '';
+    // flow=3 بازار مشتقه است (اختیار معامله)؛ قیمت آن به درد دارایی نمی‌خورد
+    if (o.flow === 3) continue;
     if (!isInsCode(insCode) || !symbol) continue;
     out.push({ insCode, symbol: fromTsetmcText(symbol.trim()), name: fromTsetmcText(String(o.lVal30 ?? '').trim()) });
   }

@@ -79,3 +79,17 @@ test('ارائه‌دهنده: خطای یک نماد جلوی بقیه را ن�
   await assert.rejects(() => tsetmcProvider(f, [bad]).fetchQuotes());
   assert.deepEqual(await tsetmcProvider(f, []).fetchQuotes(), []);
 });
+
+test('جست‌وجوی واقعی «فملی»: سهم پیدا می‌شود و اختیار معامله حذف می‌شود', () => {
+  const raw = JSON.stringify({
+    instrumentSearch: [
+      { insCode: '35425587644337450', lVal30: 'ملي‌ صنايع‌ مس‌ ايران‌', lVal18AFC: 'فملي', flow: 1 },
+      { insCode: '8731565448647588', lVal30: 'ح . ملي‌ صنايع‌ مس‌ ايران‌', lVal18AFC: 'فمليح', flow: 1 },
+      { insCode: '45088067148320823', lVal30: 'اختيارخ فملي-16000-1405/10/09', lVal18AFC: 'ضملي1000', flow: 3 },
+    ],
+  });
+  const hits = parseSearch(raw);
+  assert.equal(hits.length, 2);
+  assert.equal(hits[0].symbol, 'فملی');
+  assert.equal(hits[0].insCode, '35425587644337450');
+});
