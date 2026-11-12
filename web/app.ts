@@ -313,10 +313,23 @@ function stockSearchHtml(f: AssetForm): string {
     <div class="field"><label for="a-ins">کد نماد در TSETMC (خودکار پر می‌شود)</label>
       <div class="inline"><input id="a-ins" data-field="insCode" inputmode="numeric" value="${esc(f.insCode)}" autocomplete="off">
       <button class="btn small ghost" data-action="stock-test" ${f.busy ? 'disabled' : ''}>قیمت آزمایشی</button></div>
-      <span class="hint">${f.preview ? esc(f.preview) : 'با «قیمت آزمایشی» آخرین قیمت را ببینید و با سایت بورس مقایسه کنید.'}</span></div>`;
+      <span class="hint" dir="auto" style="user-select:text;word-break:break-word">${f.preview ? esc(f.preview) : 'با «قیمت آزمایشی» آخرین قیمت را ببینید و با سایت بورس مقایسه کنید.'}</span></div>`;
 }
 
 /** قیمت آزمایشی نماد برای تطبیق با سایت بورس؛ هیچ قیمتی ذخیره نمی‌شود */
+/** پاسخ سرور بورس را می‌خواند؛ اگر خطا یا قالب ناشناخته بود، ابتدای متن واقعی پاسخ را در پیام می‌آورد تا علت دیده شود */
+async function tsetmcCall<T>(url: string, parse: (raw: string) => T): Promise<T> {
+  const res = await nativeFetch(url);
+  const raw = await res.text();
+  const snip = raw.replace(/\s+/g, ' ').slice(0, 220) || '(پاسخ خالی)';
+  if (!res.ok) throw new Error(`پاسخ نامعتبر از سرور بورس (کد ${res.status}). متن پاسخ: ${snip}`);
+  try {
+    return parse(raw);
+  } catch (e) {
+    throw new Error(`${e instanceof Error ? e.message : 'خطا'} متن پاسخ: ${snip}`);
+  }
+}
+
 async function stockPreview(f: AssetForm) {
   if (!isInsCode(f.insCode)) {
     f.preview = 'کد نماد معتبر نیست (فقط رقم).';
@@ -327,9 +340,7 @@ async function stockPreview(f: AssetForm) {
   f.preview = '';
   renderModal();
   try {
-    const res = await nativeFetch(quoteUrl(f.insCode));
-    if (!res.ok) throw new Error(`پاسخ نامعتبر از سرور (${res.status}).`);
-    const q = parseClosingInfo(await res.text(), f.insCode);
+    const q = await tsetmcCall(quoteUrl(f.insCode), (raw) => parseClosingInfo(raw, f.insCode));
     f.preview = `آخرین معامله: ${fmtNum(fromRial(q.price))} ${unitLabel()} — ${formatJalali(q.at.slice(0, 10))} ساعت ${q.at.slice(11, 16)}`;
   } catch (e) {
     f.preview = e instanceof Error ? e.message : 'دریافت قیمت انجام نشد.';
@@ -345,9 +356,7 @@ async function runStockSearch(f: AssetForm) {
   f.error = '';
   renderModal();
   try {
-    const res = await nativeFetch(searchUrl(f.q));
-    if (!res.ok) throw new Error(`پاسخ نامعتبر از سرور (${res.status}).`);
-    f.hits = parseSearch(await res.text()).slice(0, 8);
+    f.hits = (await tsetmcCall(searchUrl(f.q), parseSearch)).slice(0, 8);
     if (f.hits.length === 0) f.error = 'نمادی با این نام پیدا نشد.';
   } catch (e) {
     f.error = e instanceof Error ? e.message : 'جست‌وجو انجام نشد.';
