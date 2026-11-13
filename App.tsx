@@ -126,11 +126,21 @@ export default function App() {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 15000);
         try {
-          const res = await fetch(msg.url, { signal: ctrl.signal });
+          // بعضی سرورها (مثل بورس) درخواست بدون هدر مرورگر را رد می‌کنند
+          const res = await fetch(msg.url, {
+            signal: ctrl.signal,
+            headers: {
+              Accept: 'application/json, text/plain, */*',
+              'Accept-Language': 'fa-IR,fa;q=0.9,en;q=0.8',
+              'User-Agent':
+                'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+            },
+          });
           const text = await res.text();
           reply(msg.id, res.ok, res.status, text, '');
-        } catch {
-          reply(msg.id, false, 0, '', 'اتصال به منبع قیمت برقرار نشد. اینترنت را بررسی کنید.');
+        } catch (e) {
+          const why = ctrl.signal.aborted ? 'پاسخی نیامد (۱۵ ثانیه)' : String((e as Error)?.message ?? e).slice(0, 120);
+          reply(msg.id, false, 0, '', `اتصال به منبع قیمت برقرار نشد (${why}).`);
         } finally {
           clearTimeout(timer);
         }
