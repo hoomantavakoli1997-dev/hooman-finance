@@ -82,6 +82,18 @@ bdi { unicode-bidi: isolate; }
 .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 1rem; padding: .9rem 1rem; display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
 .tile .k { color: var(--muted); font-size: .85rem; }
 .tile .v { font-size: 1.05rem; font-weight: 700; }
+.history { gap: .75rem; }
+.history-summary { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+.history-summary > div { display:flex; flex-direction:column; min-width:0; }
+.history-summary strong { font-size:1.12rem; font-weight:800; overflow-wrap:anywhere; }
+.history-summary small,.history-foot { color:var(--muted); font-size:.8rem; }
+.history-summary > span { font-weight:800; white-space:nowrap; }
+.history-svg { display:block; width:100%; height:auto; min-height:7rem; overflow:visible; }
+.history-ends { display:flex; justify-content:space-between; color:var(--muted); font-size:.75rem; }
+.history .chips { gap:.35rem; }
+.history .chip { min-height:2.15rem; padding-inline:.7rem; font-size:.8rem; }
+.history-empty { padding:1rem .5rem; text-align:center; color:var(--muted); font-size:.88rem; background:var(--surface-2); border-radius:.75rem; }
+.history-foot { margin:0; line-height:1.7; }
 .u { font-size: .8em; font-weight: 400; color: var(--muted); }
 
 /* lists */
