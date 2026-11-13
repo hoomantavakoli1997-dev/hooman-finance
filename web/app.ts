@@ -31,6 +31,7 @@ interface MarketSnapshot {
   source: 'sample' | 'tgju' | 'pasted';
   entries: MarketEntry[];
 }
+interface HistoryPoint { at: string; value: string }
 interface Store {
   v: 1;
   sample: boolean;
@@ -42,6 +43,8 @@ interface Store {
   debts: Debt[];
   payments: DebtPayment[];
   settings: Settings;
+  /** تاریخچه‌ی ارزش کل سرمایه؛ فقط از زمان نصب نسخه‌ی دارای این قابلیت ثبت می‌شود. */
+  history?: HistoryPoint[];
 }
 
 const KEY = 'hooman-finance-prototype-v1';
@@ -110,6 +113,7 @@ function load(): Store {
         if (!Array.isArray(s.people)) s.people = [];
         if (!Array.isArray(s.debts)) s.debts = [];
         if (!Array.isArray(s.payments)) s.payments = [];
+        if (!Array.isArray(s.history)) s.history = [];
         return s;
       }
     }
@@ -121,6 +125,7 @@ function load(): Store {
 
 let store: Store = load();
 function save() {
+  recordHistory();
   try {
     localStorage.setItem(KEY, JSON.stringify(store));
   } catch {
@@ -206,6 +211,7 @@ const view = {
   tab: 'home' as Tab, assetId: null as string | null, search: '', filter: 'all' as string,
   person: null as string | null,
   market: false, mcat: 'all' as CategoryId | 'all', mq: '', mstale: false,
+  historyRange: '1m' as '1w' | '1m' | '3m' | '6m' | '1y' | 'all',
 };
 
 const assetById = (id: string) => store.assets.find((a) => a.id === id);
@@ -250,6 +256,31 @@ function sampleNote(): string {
 function pctText(p: number): string {
   if (p > 0 && p < 0.05) return 'کمتر از ۰٫۱٪';
   return toFa(p.toFixed(1)).replace('.', '٫') + '٪';
+}
+
+function historyChart(): string {
+  const all = store.history ?? [];
+  const days: Record<string, number> = { '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
+  const cutoff = days[view.historyRange] ? Date.now() - days[view.historyRange] * 86400000 : 0;
+  const points = all.filter((p) => Date.parse(p.at) >= cutoff && Number.isFinite(Number(p.value)));
+  const ranges: [string, string][] = [['1w', '۱ هفته'], ['1m', '۱ ماه'], ['3m', '۳ ماه'], ['6m', '۶ ماه'], ['1y', '۱ سال'], ['all', 'همه']];
+  const controls = ranges.map(([key, label]) => `<button class="chip" data-action="history-range" data-v="${key}" aria-pressed="${view.historyRange === key}">${label}</button>`).join('');
+  if (!points.length) return `<section class="history card"><div class="between"><b>روند تغییرات سرمایه</b><span class="badge">تاریخچه</span></div><div class="chips">${controls}</div><div class="history-empty">هنوز تاریخچه‌ای ثبت نشده است. پس از ثبت قیمت‌ها و تغییرات مالی، روند سرمایه در این قسمت شکل می‌گیرد.</div></section>`;
+  const first = Decimal.parse(points[0].value);
+  const last = Decimal.parse(points[points.length - 1].value);
+  const delta = last.minus(first);
+  const change = first.isZero() ? null : delta.div(first).mul(100).toNumber();
+  const min = Math.min(...points.map((p) => Number(p.value)));
+  const max = Math.max(...points.map((p) => Number(p.value)));
+  const span = max - min || Math.max(Math.abs(max) * 0.02, 1);
+  const sampled = points.length > 44 ? points.filter((_, i) => i === 0 || i === points.length - 1 || i % Math.ceil(points.length / 42) === 0) : points;
+  const coords = sampled.map((p, i) => ({ x: 8 + (i / Math.max(1, sampled.length - 1)) * 304, y: 88 - ((Number(p.value) - min) / span) * 70 }));
+  const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} 96 L${coords[0].x.toFixed(1)} 96 Z`;
+  const up = !delta.isNegative();
+  const changeLabel = change === null ? '—' : `${change > 0 ? '+' : ''}${toFa(change.toFixed(1)).replace('.', '٫')}٪`;
+  const chartSvg = points.length > 1 ? `<svg class="history-svg" viewBox="0 0 320 104" role="img" aria-label="نمودار روند ارزش سرمایه"><defs><linearGradient id="history-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--teal)" stop-opacity=".25"/><stop offset="1" stop-color="var(--teal)" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#history-fill)"/><path d="${line}" fill="none" stroke="var(--teal-text)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${coords[coords.length - 1].x.toFixed(1)}" cy="${coords[coords.length - 1].y.toFixed(1)}" r="4" fill="var(--teal-text)"/></svg>` : '<div class="history-empty">برای رسم نمودار، دست‌کم دو ثبت در زمان‌های متفاوت لازم است.</div>';
+  return `<section class="history card"><div class="between"><b>روند تغییرات سرمایه</b><span class="badge">${toFa(String(points.length))} ثبت</span></div><div class="history-summary"><div><strong>${money(last)}</strong><small>آخرین ارزش ثبت‌شده</small></div><span class="${up ? 'gain' : 'loss'}">${changeLabel}</span></div>${chartSvg}<div class="history-ends"><span>${dateFa(points[0].at.slice(0, 10))}</span><span>${dateFa(points[points.length - 1].at.slice(0, 10))}</span></div><div class="chips">${controls}</div><p class="history-foot">این نمودار ارزش کل دارایی‌ها و حساب‌ها را نشان می‌دهد؛ واریز و برداشت نیز در تغییر ارزش منعکس می‌شوند و به‌معنای سود یا زیان سرمایه‌گذاری نیستند.</p></section>`;
 }
 
 interface Slice { key: string; label: string; value: Decimal; color: string }
@@ -400,6 +431,7 @@ function viewHome(pf: Portfolio): string {
       <div class="split"><span>طلب‌ها: <b>${money(ppl.receivable, false)}</b></span><span>بدهی‌ها: <b>${money(ppl.payable, false)}</b></span></div>
       <div class="formula">سرمایه‌ی خالص = نقد + (مقدار هر دارایی × قیمت روز) + طلب‌ها − بدهی‌ها</div>
     </section>
+    ${historyChart()}
     ${
       missing.length
         ? `<div class="note"><span>قیمت روز ${missing.join('، ')} ثبت نشده است، پس مجموع بالا ناقص است.</span>
@@ -678,6 +710,27 @@ function viewTxs(): string {
 /* ------------------------------- اشخاص ------------------------------- */
 
 const peopleData = (): PeopleData => ({ people: store.people, debts: store.debts, payments: store.payments });
+
+/** ثبت ارزش واقعی سبد در لحظه‌ی تغییر؛ واریز/برداشت در ارزش کل دیده می‌شود و سود سرمایه‌گذاری محسوب نمی‌شود. */
+function recordHistory() {
+  if (store.sample) return;
+  try {
+    const pf0 = computePortfolio(store.assets, store.txs, store.prices);
+    const cash = pf0.cash.plus(cashEffect(peopleData()));
+    const assetsValue = pf0.assets.reduce((sum, a) => a.value ? sum.plus(a.value) : sum, Decimal.ZERO);
+    const worth = netWorth(cash, assetsValue, computePeople(peopleData(), todayIso()));
+    if (worth.isNegative()) return;
+    const point: HistoryPoint = { at: new Date().toISOString(), value: worth.toString() };
+    const history = store.history ?? (store.history = []);
+    const previous = history[history.length - 1];
+    // جلوگیری از ثبت چند نقطه‌ی کاملاً یکسان پشت سر هم در فاصله‌ی کوتاه
+    if (previous && previous.value === point.value && Date.now() - Date.parse(previous.at) < 15 * 60_000) return;
+    history.push(point);
+    if (history.length > 500) history.splice(0, history.length - 500);
+  } catch {
+    // تاریخچه نباید مانع ذخیره‌ی تراکنش یا اطلاعات مالی شود.
+  }
+}
 const nid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 function netLabel(net: Decimal): string {
@@ -1519,6 +1572,10 @@ document.addEventListener('click', (ev) => {
     return;
   }
   switch (act) {
+    case 'history-range':
+      if (['1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
+      render();
+      break;
     case 'market-open':
       view.market = true;
       render();
@@ -2097,5 +2154,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && modal) closeModal();
 });
 
+recordHistory();
+if (!store.sample) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
 render();
 autoCheckUpdate();
