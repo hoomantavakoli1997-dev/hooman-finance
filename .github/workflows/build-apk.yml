@@ -26,6 +26,26 @@ jobs:
           cat >> android/gradle.properties <<'EOF2'
           reactNativeArchitectures=arm64-v8a,armeabi-v7a
           EOF2
+      - name: Trust the Certum root for cdn.tsetmc.com only
+        run: |
+          set -e
+          test "$(openssl x509 -in certs/certum_trusted_root_ca.pem -noout -fingerprint -sha256)" = "sha256 Fingerprint=FE:76:96:57:38:55:77:3E:37:A9:5E:7A:D4:D9:CC:96:C3:01:57:C1:5D:31:76:5B:A9:B1:57:04:E1:AE:78:FD"
+          mkdir -p android/app/src/main/res/raw android/app/src/main/res/xml
+          cp certs/certum_trusted_root_ca.pem android/app/src/main/res/raw/certum_trusted_root_ca.pem
+          cat > android/app/src/main/res/xml/network_security_config.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+            <domain-config>
+              <domain includeSubdomains="false">cdn.tsetmc.com</domain>
+              <trust-anchors>
+                <certificates src="system"/>
+                <certificates src="@raw/certum_trusted_root_ca"/>
+              </trust-anchors>
+            </domain-config>
+          </network-security-config>
+          XML
+          sed -i 's|<application |<application android:networkSecurityConfig="@xml/network_security_config" |' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:networkSecurityConfig="@xml/network_security_config"' android/app/src/main/AndroidManifest.xml
       - name: Keep only ARM CPUs in the APK
         run: |
           sed -i '0,/defaultConfig {/s//defaultConfig {\n        ndk { abiFilters "arm64-v8a", "armeabi-v7a" }/' android/app/build.gradle
