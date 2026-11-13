@@ -22,7 +22,8 @@ export function iconKind(a: { id: string; name: string; unit?: string; kind?: As
   if (f) return { t: 'flag', code: f[1] };
   if (a.kind === 'crypto' || /^crypto/.test(k)) {
     const slug = k.replace(/^crypto[-_]/, '').replace(/-(irr|irc)$/, '');
-    return { t: 'brand', slug: ['bitcoin','ethereum','ripple','solana','dogecoin','tron','litecoin','toncoin','usd-coin'].includes(slug) ? slug : 'crypto' };
+    const known = ['bitcoin','ethereum','ripple','solana','dogecoin','tron','litecoin','toncoin','usd-coin'];
+    return { t: 'brand', slug: known.includes(slug) ? slug : 'crypto' };
   }
   if (a.priceKeys?.tsetmc || (a.kind === 'custom' && a.unit === 'سهم')) return { t: 'ticker', text: [...a.name.trim()].slice(0, 2).join('') || 'سهم' };
   if (a.kind === 'currency') return { t: 'currency' };
@@ -92,16 +93,21 @@ export function iconSvg(k: Kind): string {
     case 'silver':
       return coin('#7d8791', '#d5dbe1', '#4b535b', '', '<circle cx="20" cy="20" r="7" fill="none" stroke="#9aa4ad" stroke-width="1.4"/>');
     case 'stable':
-      return wrap('<circle cx="20" cy="20" r="16" fill="#26a17b"/><path d="M9 11h22M20 11v18M12.5 16.5h15" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>');
+      return wrap('<circle cx="20" cy="20" r="16" fill="#26a17b"/><path d="M10 12h20M20 12v17M13 17h14" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>');
     case 'crypto':
       return wrap('<circle cx="20" cy="20" r="16" fill="#5a4bd1"/><path d="M20 9l9 5.2v10.4L20 30l-9-5.4V14.2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><circle cx="20" cy="19.5" r="3" fill="#fff"/>');
     case 'brand': {
-      const brands: Record<string, { bg: string; mark: string; size?: number }> = {
-        tether: { bg: '#26a17b', mark: '₮', size: 23 }, bitcoin: { bg: '#f7931a', mark: '₿', size: 23 },
-        ethereum: { bg: '#627eea', mark: '◆', size: 23 }, ripple: { bg: '#23292f', mark: 'X', size: 22 },
-        solana: { bg: '#171b2b', mark: '≋', size: 27 }, dogecoin: { bg: '#c2a633', mark: 'Ð', size: 23 },
-        tron: { bg: '#e84142', mark: 'T', size: 23 }, litecoin: { bg: '#345d9d', mark: 'Ł', size: 23 },
-        toncoin: { bg: '#0098ea', mark: 'TON', size: 11 }, 'usd-coin': { bg: '#2775ca', mark: '
+      const brands: Record<string, { bg: string; mark: string; size: number }> = {
+        tether: { bg: '#26a17b', mark: '₮', size: 23 },
+        bitcoin: { bg: '#f7931a', mark: '₿', size: 23 },
+        ethereum: { bg: '#627eea', mark: '◆', size: 23 },
+        ripple: { bg: '#23292f', mark: 'X', size: 22 },
+        solana: { bg: '#171b2b', mark: '≋', size: 27 },
+        dogecoin: { bg: '#c2a633', mark: 'Ð', size: 23 },
+        tron: { bg: '#e84142', mark: 'T', size: 23 },
+        litecoin: { bg: '#345d9d', mark: 'Ł', size: 23 },
+        toncoin: { bg: '#0098ea', mark: 'TON', size: 11 },
+        'usd-coin': { bg: '#2775ca', mark: '
     case 'stock':
       return wrap('<rect x="4" y="4" width="32" height="32" rx="8" fill="#0f8f8a"/><rect x="10" y="21" width="5" height="9" rx="1" fill="#fff"/><rect x="17.5" y="15" width="5" height="15" rx="1" fill="#fff"/><rect x="25" y="9" width="5" height="21" rx="1" fill="#bff5f1"/>');
     case 'flag':
@@ -139,7 +145,7 @@ export function marketIcon(key: string, category: string, title: string): string
         crypto: { bg: '#5a4bd1', mark: '◆', size: 21 },
       };
       const b = brands[k.slug] ?? brands.crypto;
-      return wrap(`<circle cx="20" cy="20" r="17" fill="${b.bg}"/><text x="20" y="27" text-anchor="middle" font-size="${b.size ?? 21}" font-weight="800" fill="#fff" font-family="Arial,sans-serif">${b.mark}</text>`);
+      return wrap(`<circle cx="20" cy="20" r="17" fill="${b.bg}"/><text x="20" y="27" text-anchor="middle" font-size="${b.size}" font-weight="800" fill="#fff" font-family="Arial,sans-serif">${b.mark}</text>`);
     }
     case 'stock':
       return wrap('<rect x="4" y="4" width="32" height="32" rx="8" fill="#0f8f8a"/><rect x="10" y="21" width="5" height="9" rx="1" fill="#fff"/><rect x="17.5" y="15" width="5" height="15" rx="1" fill="#fff"/><rect x="25" y="9" width="5" height="21" rx="1" fill="#bff5f1"/>');
