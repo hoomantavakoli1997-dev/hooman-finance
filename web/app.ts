@@ -595,7 +595,9 @@ function viewAssetDetail(id: string, pf: Portfolio): string {
       <button class="btn" data-action="new-tx" data-asset="${esc(id)}" data-type="buy">خرید</button>
       <button class="btn" data-action="new-tx" data-asset="${esc(id)}" data-type="sell">فروش</button>
       <button class="btn ghost" data-action="price" data-v="${esc(id)}">قیمت روز</button>
+      ${asset.priceKeys?.tgju || DEFAULT_PRICE_KEYS.tgju?.[asset.id] ? '' : `<button class="btn ghost" data-action="stock-link" data-v="${esc(id)}">${asset.priceKeys?.tsetmc ? 'تغییر اتصال به بورس' : 'اتصال به بورس'}</button>`}
     </div>
+    ${asset.priceKeys?.tsetmc ? `<div class="note info"><span>قیمت این دارایی خودکار از بورس (TSETMC) گرفته می‌شود. کد نماد: <b dir="ltr">${esc(asset.priceKeys.tsetmc)}</b></span></div>` : ''}
     <div class="grid2">
       <div class="tile"><span class="k">میانگین قیمت خرید</span><span class="v">${money(state.avgCost)}</span></div>
       <div class="tile"><span class="k">بهای تمام‌شده‌ی موجودی</span><span class="v">${money(state.costBasis)}</span></div>
@@ -1138,6 +1140,8 @@ interface AssetForm {
   name: string; unit: string; decimals: string; preset: string; error: string;
   /** سهام بورس ایران: عبارت جست‌وجو، نتیجه‌ها، کد نماد در TSETMC و پیش‌نمایش قیمت */
   q: string; hits: InstrumentHit[]; insCode: string; preview: string; busy: boolean;
+  /** اگر پر باشد، فرم فقط برای وصل کردن دارایی موجود به بورس است */
+  linkId?: string;
 }
 const newAssetForm = (): AssetForm => ({
   name: '', unit: 'سهم', decimals: '0', preset: 'stock_ir', error: '', q: '', hits: [], insCode: '', preview: '', busy: false,
@@ -1395,6 +1399,12 @@ function renderModal() {
       <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
       <div class="actions"><button class="btn" data-action="price-save">ذخیره</button>
         ${cur ? '<button class="btn ghost" data-action="price-clear">حذف قیمت</button>' : ''}
+        <button class="btn ghost" data-action="close">انصراف</button></div>`);
+  } else if (modal.kind === 'asset' && modal.f.linkId) {
+    modalEl.innerHTML = sheet(`<h2>اتصال ${esc(assetById(modal.f.linkId)?.name ?? '')} به بورس</h2>
+      ${stockSearchHtml(modal.f)}
+      <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
+      <div class="actions"><button class="btn" data-action="stock-link-save">ذخیره‌ی اتصال</button>
         <button class="btn ghost" data-action="close">انصراف</button></div>`);
   } else if (modal.kind === 'asset') {
     const assetDecimals = modal.f.decimals;
@@ -1729,6 +1739,31 @@ document.addEventListener('click', (ev) => {
       view.assetId = asset.id;
       render();
       toast('به دارایی‌ها اضافه شد. برای قیمت روز، «به‌روزرسانی قیمت‌ها» را بزنید یا قیمت را دستی وارد کنید.');
+      break;
+    }
+    case 'stock-link': {
+      const a = assetById(v);
+      if (!a) break;
+      const f = newAssetForm();
+      f.linkId = a.id;
+      f.q = a.name;
+      f.insCode = a.priceKeys?.tsetmc ?? '';
+      modal = { kind: 'asset', f };
+      renderModal();
+      if (!f.insCode) void runStockSearch(f);
+      break;
+    }
+    case 'stock-link-save': {
+      if (modal?.kind !== 'asset' || !modal.f.linkId) break;
+      const a = assetById(modal.f.linkId);
+      const code = modal.f.insCode.trim();
+      if (!a) break;
+      if (!isInsCode(code)) return setErr('نماد را جست‌وجو و انتخاب کنید یا کد نماد را وارد کنید (فقط رقم).');
+      a.priceKeys = { ...(a.priceKeys ?? {}), tsetmc: code };
+      save();
+      closeModal();
+      render();
+      toast('به بورس وصل شد. «به‌روزرسانی قیمت‌ها» را بزنید.');
       break;
     }
     case 'stock-search':
