@@ -8,7 +8,7 @@ import { CASH_ID } from '../src/core/types';
 
 type Kind =
   | { t: 'cash' } | { t: 'gold'; label?: string } | { t: 'silver' } | { t: 'stable' } | { t: 'crypto' }
-  | { t: 'stock' } | { t: 'flag'; code: string } | { t: 'currency' } | { t: 'letter'; ch: string } | { t: 'ticker'; text: string } | { t: 'people' };
+  | { t: 'stock' } | { t: 'flag'; code: string } | { t: 'currency' } | { t: 'letter'; ch: string } | { t: 'ticker'; text: string } | { t: 'brand'; slug: string } | { t: 'people' };
 
 export function iconKind(a: { id: string; name: string; unit?: string; kind?: Asset['kind']; priceKeys?: Record<string, string> }): Kind {
   if (a.id === CASH_ID || a.id === 'cash') return { t: 'cash' };
@@ -16,11 +16,15 @@ export function iconKind(a: { id: string; name: string; unit?: string; kind?: As
   if (a.id === 'gold' || k === 'geram18') return { t: 'gold', label: '۱۸' };
   if (/silver|nogre|noghre/.test(k)) return { t: 'silver' };
   if (/geram24|sekee|sekeb|sekke|nim|rob|mesghal|gold|abshodeh|coin/.test(k)) return { t: 'gold' };
-  if (a.id === 'usdt' || /usdt|tether/.test(k)) return { t: 'stable' };
+  if (a.id === 'usdt' || /usdt|tether/.test(k)) return { t: 'brand', slug: 'tether' };
   if (a.id === 'usd' || k === 'price_dollar_rl') return { t: 'flag', code: 'us' };
   const f = /^price_(eur|gbp|jpy|try|aed|cny)/.exec(k);
   if (f) return { t: 'flag', code: f[1] };
-  if (a.kind === 'crypto' || /^crypto/.test(k)) return { t: 'crypto' };
+  if (a.kind === 'crypto' || /^crypto/.test(k)) {
+    const slug = k.replace(/^crypto[-_]/, '').replace(/-(irr|irc)$/, '');
+    const known = ['bitcoin','ethereum','ripple','solana','dogecoin','tron','litecoin','toncoin','usd-coin'];
+    return { t: 'brand', slug: known.includes(slug) ? slug : 'crypto' };
+  }
   if (a.priceKeys?.tsetmc || (a.kind === 'custom' && a.unit === 'سهم')) return { t: 'ticker', text: [...a.name.trim()].slice(0, 2).join('') || 'سهم' };
   if (a.kind === 'currency') return { t: 'currency' };
   return { t: 'letter', ch: [...a.name.trim()][0] ?? '؟' };
@@ -80,6 +84,26 @@ const coin = (rim: string, face: string, ink: string, label = '', extra = '') =>
     <path d="M10.5 15.5A11 11 0 0 1 22 9" stroke="rgba(255,255,255,.55)" stroke-width="1.8" fill="none" stroke-linecap="round"/>${extra}
     ${label ? `<text x="20" y="24.6" text-anchor="middle" font-size="13" font-weight="800" fill="${ink}" font-family="Vazirmatn,Tahoma,sans-serif">${label}</text>` : ''}`);
 
+function brandIcon(slug: string): string {
+  const brands: Record<string, { bg: string; mark: string; size: number }> = {
+    tether: { bg: '#26a17b', mark: 'T', size: 23 },
+    bitcoin: { bg: '#f7931a', mark: 'B', size: 23 },
+    ethereum: { bg: '#627eea', mark: 'ETH', size: 12 },
+    ripple: { bg: '#23292f', mark: 'X', size: 22 },
+    solana: { bg: '#171b2b', mark: 'SOL', size: 11 },
+    dogecoin: { bg: '#c2a633', mark: 'D', size: 23 },
+    tron: { bg: '#e84142', mark: 'T', size: 23 },
+    litecoin: { bg: '#345d9d', mark: 'L', size: 23 },
+    toncoin: { bg: '#0098ea', mark: 'TON', size: 11 },
+    'usd-coin': { bg: '#2775ca', mark: 'USDC', size: 10 },
+    crypto: { bg: '#5a4bd1', mark: 'CR', size: 13 },
+  };
+  const b = brands[slug] || brands.crypto;
+  const svg = '<circle cx="20" cy="20" r="17" fill="' + b.bg + '"/>' +
+    '<text x="20" y="27" text-anchor="middle" font-size="' + b.size + '" font-weight="800" fill="#fff" font-family="Arial,sans-serif">' + b.mark + '</text>';
+  return wrap(svg);
+}
+
 export function iconSvg(k: Kind): string {
   switch (k.t) {
     case 'cash':
@@ -92,6 +116,8 @@ export function iconSvg(k: Kind): string {
       return wrap('<circle cx="20" cy="20" r="16" fill="#26a17b"/><path d="M10 12h20M20 12v17M13 17h14" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>');
     case 'crypto':
       return wrap('<circle cx="20" cy="20" r="16" fill="#5a4bd1"/><path d="M20 9l9 5.2v10.4L20 30l-9-5.4V14.2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><circle cx="20" cy="19.5" r="3" fill="#fff"/>');
+    case 'brand':
+      return brandIcon(k.slug);
     case 'stock':
       return wrap('<rect x="4" y="4" width="32" height="32" rx="8" fill="#0f8f8a"/><rect x="10" y="21" width="5" height="9" rx="1" fill="#fff"/><rect x="17.5" y="15" width="5" height="15" rx="1" fill="#fff"/><rect x="25" y="9" width="5" height="21" rx="1" fill="#bff5f1"/>');
     case 'flag':
@@ -120,8 +146,8 @@ export function marketIcon(key: string, category: string, title: string): string
   }
   if (category === 'crypto') {
     const slug = k.replace(/^crypto[-_]/, '').replace(/-(irr|irc)$/, '');
-    const marks: Record<string, string> = { tether: '₮', bitcoin: '₿', ethereum: '◆', ripple: 'X', solana: 'S', dogecoin: 'Ð', tron: 'T', litecoin: 'Ł', toncoin: 'TON', 'usd-coin': 'USDC' };
-    return iconSvg({ t: 'ticker', text: marks[slug] ?? [...title].slice(0, 2).join('') });
+    const known = ['tether','bitcoin','ethereum','ripple','solana','dogecoin','tron','litecoin','toncoin','usd-coin'];
+    return iconSvg({ t: 'brand', slug: known.includes(slug) ? slug : 'crypto' });
   }
   return iconSvg({ t: 'ticker', text: [...title].filter((c) => c.trim()).slice(0, 2).join('') || '•' });
 }
