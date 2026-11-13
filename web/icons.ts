@@ -8,7 +8,7 @@ import { CASH_ID } from '../src/core/types';
 
 type Kind =
   | { t: 'cash' } | { t: 'gold'; label?: string } | { t: 'silver' } | { t: 'stable' } | { t: 'crypto' }
-  | { t: 'stock' } | { t: 'flag'; code: string } | { t: 'currency' } | { t: 'letter'; ch: string } | { t: 'people' };
+  | { t: 'stock' } | { t: 'flag'; code: string } | { t: 'currency' } | { t: 'letter'; ch: string } | { t: 'ticker'; text: string } | { t: 'people' };
 
 export function iconKind(a: { id: string; name: string; unit?: string; kind?: Asset['kind']; priceKeys?: Record<string, string> }): Kind {
   if (a.id === CASH_ID || a.id === 'cash') return { t: 'cash' };
@@ -21,7 +21,7 @@ export function iconKind(a: { id: string; name: string; unit?: string; kind?: As
   const f = /^price_(eur|gbp|jpy|try|aed|cny)/.exec(k);
   if (f) return { t: 'flag', code: f[1] };
   if (a.kind === 'crypto' || /^crypto/.test(k)) return { t: 'crypto' };
-  if (a.priceKeys?.tsetmc || (a.kind === 'custom' && a.unit === 'سهم')) return { t: 'stock' };
+  if (a.priceKeys?.tsetmc || (a.kind === 'custom' && a.unit === 'سهم')) return { t: 'ticker', text: [...a.name.trim()].slice(0, 2).join('') || 'سهم' };
   if (a.kind === 'currency') return { t: 'currency' };
   return { t: 'letter', ch: [...a.name.trim()][0] ?? '؟' };
 }
@@ -89,7 +89,7 @@ export function iconSvg(k: Kind): string {
     case 'silver':
       return coin('#7d8791', '#d5dbe1', '#4b535b', '', '<circle cx="20" cy="20" r="7" fill="none" stroke="#9aa4ad" stroke-width="1.4"/>');
     case 'stable':
-      return coin('#1d7f5f', '#35b58c', '#fff', '$');
+      return wrap('<circle cx="20" cy="20" r="16" fill="#26a17b"/><path d="M10 12h20M20 12v17M13 17h14" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>');
     case 'crypto':
       return wrap('<circle cx="20" cy="20" r="16" fill="#5a4bd1"/><path d="M20 9l9 5.2v10.4L20 30l-9-5.4V14.2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><circle cx="20" cy="19.5" r="3" fill="#fff"/>');
     case 'stock':
@@ -98,6 +98,8 @@ export function iconSvg(k: Kind): string {
       return flag(k.code);
     case 'currency':
       return coin('#5c6b82', '#9fb0c6', '#243247', '¤');
+    case 'ticker':
+      return wrap(`<rect x="3" y="3" width="34" height="34" rx="10" fill="#315b80"/><text x="20" y="25" text-anchor="middle" font-size="${k.text.length > 1 ? 13 : 18}" font-weight="800" fill="#fff" font-family="Vazirmatn,Tahoma,sans-serif">${k.text.replace(/[<>&]/g, '')}</text>`);
     case 'people':
       return wrap('<circle cx="20" cy="15" r="6" fill="#6f8fb0"/><path d="M8 33c1.5-7 6-10 12-10s10.500 3 12 10z" fill="#6f8fb0"/>');
     default:
@@ -106,3 +108,20 @@ export function iconSvg(k: Kind): string {
 }
 
 export const assetIcon = (a: Parameters<typeof iconKind>[0]): string => `<span class="ico">${iconSvg(iconKind(a))}</span>`;
+
+export function marketIcon(key: string, category: string, title: string): string {
+  const k = key.toLowerCase();
+  if (category === 'gold') return iconSvg({ t: 'gold', label: /18|geram18/.test(k) ? '۱۸' : '' });
+  if (category === 'metal') return iconSvg({ t: /silver|noghre/.test(k) ? 'silver' : 'gold' });
+  if (category === 'currency') {
+    const code = k === 'price_dollar_rl' ? 'us' : /^price_([a-z]{3})$/.exec(k)?.[1] ?? '';
+    const flagCodes: Record<string, string> = { usd: 'us', eur: 'eur', gbp: 'gbp', jpy: 'jpy', try: 'try', aed: 'aed', cny: 'cny' };
+    return iconSvg(flagCodes[code] ? { t: 'flag', code: flagCodes[code] } : { t: 'currency' });
+  }
+  if (category === 'crypto') {
+    const slug = k.replace(/^crypto[-_]/, '').replace(/-(irr|irc)$/, '');
+    const marks: Record<string, string> = { tether: '₮', bitcoin: '₿', ethereum: '◆', ripple: 'X', solana: 'S', dogecoin: 'Ð', tron: 'T', litecoin: 'Ł', toncoin: 'TON', 'usd-coin': 'USDC' };
+    return iconSvg({ t: 'ticker', text: marks[slug] ?? [...title].slice(0, 2).join('') });
+  }
+  return iconSvg({ t: 'ticker', text: [...title].filter((c) => c.trim()).slice(0, 2).join('') || '•' });
+}
