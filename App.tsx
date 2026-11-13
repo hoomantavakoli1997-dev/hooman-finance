@@ -3,6 +3,7 @@ import { BackHandler, Linking, Platform, StatusBar, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
 
@@ -133,7 +134,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -141,6 +142,21 @@ export default function App() {
       }
       if (msg.type === 'exit') {
         BackHandler.exitApp();
+        return;
+      }
+      if (msg.type === 'share-file' && typeof msg.text === 'string' && typeof msg.name === 'string') {
+        // فایل پشتیبان رمزدار را می‌نویسد و منوی اشتراک‌گذاری اندروید (جیمیل، Drive، …) را باز می‌کند
+        void (async () => {
+          try {
+            const uri = `${FileSystem.cacheDirectory ?? ''}${msg.name.replace(/[^\w.\-]/g, '_')}`;
+            await FileSystem.writeAsStringAsync(uri, msg.text as string, { encoding: FileSystem.EncodingType.UTF8 });
+            if (!(await Sharing.isAvailableAsync())) throw new Error('اشتراک‌گذاری در این دستگاه نیست.');
+            await Sharing.shareAsync(uri, { mimeType: 'application/octet-stream', dialogTitle: 'ارسال فایل پشتیبان' });
+            call('__shareReply', { ok: true });
+          } catch (e) {
+            call('__shareReply', { ok: false, error: String((e as Error)?.message ?? e).slice(0, 120) });
+          }
+        })();
         return;
       }
       if (msg.type === 'open' && msg.url) {

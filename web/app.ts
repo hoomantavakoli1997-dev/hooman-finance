@@ -1,3 +1,4 @@
+import { BackupError, MIN_PASSPHRASE, decryptBackup, encryptBackup } from '../src/core/backup';
 import { Decimal } from '../src/core/decimal';
 import {
   addTx, computeAssetState, computeCash, computePortfolio, deleteTx, restoreTx, updateTx,
@@ -25,6 +26,8 @@ interface Settings {
   hide?: boolean;
   /** کلید قیمت‌های منتخب برای نمایش در خانه (اگر نباشد، فهرست پیش‌فرض) */
   favs?: string[];
+  /** آخرین باری که فایل پشتیبان ساخته شد (ISO) */
+  lastBackup?: string;
   unit: 'toman' | 'rial';
   theme: 'system' | 'light' | 'dark';
   font: 'normal' | 'large';
@@ -448,6 +451,11 @@ function viewHome(pf: Portfolio): string {
       missing.length
         ? `<div class="note"><span>قیمت روز ${missing.join('، ')} ثبت نشده است، پس مجموع بالا ناقص است.</span>
            <button class="btn link" data-action="price" data-v="${esc(pf.missingPrice[0])}">ثبت قیمت روز</button></div>`
+        : ''
+    }
+    ${
+      backupDue()
+        ? `<div class="note"><span>${store.settings.lastBackup ? 'پشتیبان شما قدیمی است.' : 'هنوز از اطلاعات پشتیبان نگرفته‌اید.'} با عوض شدن گوشی یا پاک شدن برنامه، اطلاعات از بین می‌رود.</span><button class="btn" data-action="backup-open">پشتیبان‌گیری</button></div>`
         : ''
     }
     ${marketSection()}
@@ -1098,6 +1106,95 @@ function updateSection(): string {
     <div class="note info">${body}</div>`;
 }
 
+/* ------------------------------ پشتیبان‌گیری ------------------------------ */
+
+function backupInfoHtml(): string {
+  const last = store.settings.lastBackup;
+  const days = last ? Math.floor((Date.now() - Date.parse(last)) / 86400000) : null;
+  return last
+    ? `آخرین پشتیبان ساخته‌شده: ${dateFa(last.slice(0, 10))}${days && days > 0 ? ` (${toFa(String(days))} روز پیش)` : ' (امروز)'}`
+    : 'هنوز پشتیبانی ساخته نشده است.';
+}
+
+/** وضعیت داده برای تصمیم درباره‌ی یادآوری: داده‌ی واقعی و بدون پشتیبان یا پشتیبان قدیمی */
+function backupDue(): boolean {
+  if (store.sample || (!store.txs.length && !store.debts.length)) return false;
+  const last = store.settings.lastBackup;
+  return !last || Date.now() - Date.parse(last) > 30 * 86400000;
+}
+
+function normalizeStore(raw: unknown): Store | null {
+  const s = raw as Store | null;
+  if (!s || s.v !== 1 || !Array.isArray(s.assets) || !Array.isArray(s.txs) || !s.settings || typeof s.settings !== 'object') return null;
+  if (!s.prices || typeof s.prices !== 'object') s.prices = {};
+  if (!s.market || !Array.isArray(s.market.entries)) s.market = bundledMarket();
+  for (const k of ['people', 'debts', 'payments', 'history'] as const) if (!Array.isArray(s[k])) (s as unknown as Record<string, unknown[]>)[k] = [];
+  s.sample = false;
+  return s;
+}
+
+async function makeBackup() {
+  if (modal?.kind !== 'backup') return;
+  const f = modal.f;
+  if (f.pass.trim().length < MIN_PASSPHRASE) return setErr(`رمز باید دست‌کم ${toFa(String(MIN_PASSPHRASE))} نویسه باشد.`);
+  if (f.pass !== f.pass2) return setErr('رمز و تکرار آن یکی نیست.');
+  f.busy = true;
+  setErr('');
+  try {
+    const stamp = new Date().toISOString();
+    const text = await encryptBackup(JSON.stringify({ app: 'hooman-finance', at: stamp, store }), f.pass);
+    const name = `hooman-finance-backup-${todayIso()}.hfbackup`;
+    store.settings.lastBackup = stamp;
+    save();
+    if (inApp()) {
+      toNative({ type: 'share-file', name, text });
+      closeModal();
+      render();
+      toast('فایل پشتیبان ساخته شد؛ مقصد (مثلاً جیمیل) را انتخاب کنید.');
+    } else {
+      try { await navigator.clipboard?.writeText(text); } catch { /* ignore */ }
+      closeModal();
+      render();
+      toast('در نسخه‌ی وب فایل ساخته نمی‌شود؛ متن رمزدار پشتیبان کپی شد.');
+    }
+  } catch (e) {
+    f.busy = false;
+    setErr(e instanceof BackupError ? e.message : 'ساخت پشتیبان ناموفق بود.');
+  }
+}
+
+async function restoreCheck() {
+  if (modal?.kind !== 'restore') return;
+  const f = modal.f;
+  if (!f.pass) return setErr('رمز پشتیبان را وارد کنید.');
+  f.busy = true;
+  setErr('');
+  try {
+    const obj = JSON.parse(await decryptBackup(f.text, f.pass)) as { app?: string; at?: string; store?: unknown };
+    const st = obj.app === 'hooman-finance' ? normalizeStore(obj.store) : null;
+    if (!st) throw new BackupError('محتوای پشتیبان معتبر نیست.');
+    f.parsed = st;
+    f.at = typeof obj.at === 'string' ? obj.at : '';
+    f.stage = 'confirm';
+    f.busy = false;
+    renderModal();
+  } catch (e) {
+    f.busy = false;
+    setErr(e instanceof BackupError ? e.message : 'خواندن پشتیبان ناموفق بود.');
+  }
+}
+
+function restoreApply() {
+  if (modal?.kind !== 'restore' || !modal.f.parsed) return;
+  try { localStorage.setItem('hooman-finance-before-restore', JSON.stringify(store)); } catch { /* ignore */ }
+  store = modal.f.parsed;
+  view.assetId = null;
+  save();
+  closeModal();
+  render();
+  toast('اطلاعات از پشتیبان بازیابی شد.');
+}
+
 function viewSettings(): string {
   const s = store.settings;
   return `${header('تنظیمات')}
@@ -1118,12 +1215,21 @@ function viewSettings(): string {
         <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
       </div>
     </div>
+    <h2 class="section-title">پشتیبان‌گیری</h2>
+    <div class="note info"><span>${backupInfoHtml()}</span>
+      <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
+      <div class="actions">
+        <button class="btn" data-action="backup-open">ساخت و ارسال پشتیبان</button>
+        <button class="btn ghost" data-action="restore-pick">بازیابی از فایل پشتیبان</button>
+      </div>
+      <input type="file" id="restore-file" hidden>
+    </div>
     <h2 class="section-title">داده‌ها</h2>
     <div class="actions">
       <button class="btn ghost" data-action="ask" data-v="reset">بازگشت به داده‌ی آزمایشی</button>
       <button class="btn ghost" data-action="ask" data-v="clear">پاک کردن همه‌ی داده‌ها</button>
     </div>
-    <div class="note info"><span>این نسخه‌ی آزمایشی است. داده‌ها فقط در همین مرورگر نگه‌داری می‌شوند. قفل رمز، پشتیبان‌گیری و دریافت خودکار قیمت در مرحله‌ی سوم ساخته می‌شوند.</span></div>`;
+    <div class="note info"><span>داده‌ها فقط روی همین دستگاه نگه‌داری می‌شوند؛ برای محافظت از آن‌ها پشتیبان بگیرید. قفل رمز برنامه هنوز ساخته نشده است.</span></div>`;
 }
 
 /* ============================== رندر اصلی ============================== */
@@ -1227,6 +1333,8 @@ type Modal =
   | { kind: 'paste'; f: { text: string; error: string } }
   | { kind: 'prices'; results: PriceResult[]; errors: { provider: string; message: string }[] }
   | { kind: 'ask'; what: 'reset' | 'clear' }
+  | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
+  | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
 let modal: Modal = null;
 
@@ -1528,6 +1636,31 @@ function renderModal() {
       <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
       <div class="actions"><button class="btn" data-action="paste-apply">اعمال قیمت‌ها</button>
         <button class="btn ghost" data-action="close">انصراف</button></div>`);
+  } else if (modal.kind === 'backup') {
+    modalEl.innerHTML = sheet(`<h2>ساخت فایل پشتیبان</h2>
+      <div class="note info"><span>برای پشتیبان یک رمز بگذارید. بعد از ساخت، منوی اشتراک‌گذاری اندروید باز می‌شود و می‌توانید فایل را برای جیمیل خودتان بفرستید. رمز را به همراه فایل نفرستید و جای امنی یادداشت کنید.</span></div>
+      <div class="field"><label for="bk-pass">رمز پشتیبان</label>
+        <input id="bk-pass" data-field="pass" type="password" autocomplete="new-password" value="${esc(modal.f.pass)}"></div>
+      <div class="field"><label for="bk-pass2">تکرار رمز</label>
+        <input id="bk-pass2" data-field="pass2" type="password" autocomplete="new-password" value="${esc(modal.f.pass2)}"></div>
+      <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
+      <div class="actions"><button class="btn" data-action="backup-make"${modal.f.busy ? ' disabled' : ''}>ساخت و ارسال</button>
+        <button class="btn ghost" data-action="close">انصراف</button></div>`);
+  } else if (modal.kind === 'restore') {
+    const st = modal.f.parsed;
+    modalEl.innerHTML = sheet(
+      modal.f.stage === 'pass'
+        ? `<h2>بازیابی از پشتیبان</h2>
+      <div class="field"><label for="rs-pass">رمز این فایل پشتیبان</label>
+        <input id="rs-pass" data-field="pass" type="password" autocomplete="off" value="${esc(modal.f.pass)}"></div>
+      <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
+      <div class="actions"><button class="btn" data-action="restore-check"${modal.f.busy ? ' disabled' : ''}>باز کردن پشتیبان</button>
+        <button class="btn ghost" data-action="close">انصراف</button></div>`
+        : `<h2>جایگزینی اطلاعات</h2>
+      <div class="note"><span>این پشتیبان${modal.f.at ? ' (ساخته‌شده در ' + dateFa(modal.f.at.slice(0, 10)) + ')' : ''} شامل ${toFa(String(st?.assets.length ?? 0))} دارایی، ${toFa(String(st?.txs.length ?? 0))} تراکنش و ${toFa(String(st?.people.length ?? 0))} شخص است. با ادامه، همه‌ی اطلاعات فعلی برنامه با آن جایگزین می‌شود.</span></div>
+      <div class="actions"><button class="btn" data-action="restore-apply">جایگزین کن</button>
+        <button class="btn ghost" data-action="close">انصراف</button></div>`,
+    );
   } else if (modal.kind === 'prices') {
     const LABEL: Record<string, string> = {
       updated: 'به‌روز شد', unchanged: 'بدون تغییر', 'no-key': 'دستی', missing: 'پیدا نشد',
@@ -1580,6 +1713,22 @@ document.addEventListener('click', (ev) => {
     case 'history-range':
       if (['1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
       render();
+      break;
+    case 'backup-open':
+      modal = { kind: 'backup', f: { pass: '', pass2: '', error: '', busy: false } };
+      renderModal();
+      break;
+    case 'backup-make':
+      void makeBackup();
+      break;
+    case 'restore-pick':
+      (document.getElementById('restore-file') as HTMLInputElement | null)?.click();
+      break;
+    case 'restore-check':
+      void restoreCheck();
+      break;
+    case 'restore-apply':
+      restoreApply();
       break;
     case 'fav': {
       const cur = favKeys();
@@ -2051,6 +2200,9 @@ function checkUpdate() {
   if (view.tab === 'settings') render();
 }
 Object.assign(window, {
+  __shareReply: (r: { ok: boolean; error?: string }) => {
+    if (!r.ok) toast('ارسال فایل ممکن نشد: ' + (r.error ?? 'خطای نامشخص'));
+  },
   __updateReply: (r: { ok: boolean; current: number; latest: number; url: string; size: number; notes: string; error: string }) => {
     upd.current = r.current;
     if (!r.ok) {
@@ -2150,6 +2302,17 @@ document.addEventListener('input', (ev) => {
 });
 
 document.addEventListener('change', (ev) => {
+  const inp = ev.target as HTMLInputElement;
+  if (inp.id === 'restore-file' && inp.files?.[0]) {
+    const file = inp.files[0];
+    if (file.size > 20 * 1024 * 1024) { toast('این فایل برای پشتیبان بسیار بزرگ است.'); inp.value = ''; return; }
+    void file.text().then((text) => {
+      modal = { kind: 'restore', f: { text, pass: '', error: '', busy: false, stage: 'pass', parsed: null, at: '' } };
+      renderModal();
+      inp.value = '';
+    }, () => toast('خواندن فایل ممکن نشد.'));
+    return;
+  }
   const t = ev.target as HTMLSelectElement;
   if (t.dataset?.field === 'assetId' && modal?.kind === 'tx' && t.value === '__new') {
     pendingTx = modal.f;
