@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, Linking, Platform, StatusBar, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Constants from 'expo-constants';
@@ -19,8 +19,16 @@ const UPDATE_REPO = 'hoomantavakoli1997-dev/hooman-finance';
 /** شماره‌ی ساخت همین نسخه؛ هنگام ساخت در GitHub Actions در app.json قرار می‌گیرد */
 const BUILD = Number((Constants.expoConfig?.extra as { build?: number } | undefined)?.build ?? 0);
 
+const TSETMC_HOST = 'https://cdn.tsetmc.com/';
+interface WvJob { id: string; url: string }
+
 export default function App() {
   const web = useRef<WebView>(null);
+  // مرورگر نامرئی برای بورس: اگر fetch بومی به سرور بورس نرسید (مثلاً به‌خاطر گواهی ناقص سرور)،
+  // همان آدرس را مثل مرورگر باز می‌کنیم و متن صفحه را برمی‌داریم. درخواست‌ها یکی‌یکی انجام می‌شود.
+  const [job, setJob] = useState<WvJob | null>(null);
+  const jobRef = useRef<WvJob | null>(null);
+  const queue = useRef<WvJob[]>([]);
 
   const reply = useCallback((id: string, ok: boolean, status: number, body: string, err: string) => {
     const esc = (v: unknown) => JSON.stringify(v).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029');
@@ -28,6 +36,37 @@ export default function App() {
       `window.__bridgeReply && window.__bridgeReply(${esc(id)}, ${ok}, ${status}, ${esc(body)}, ${esc(err)}); true;`,
     );
   }, []);
+
+  const nextJob = useCallback(() => {
+    const n = queue.current.shift() ?? null;
+    jobRef.current = n;
+    setJob(n);
+  }, []);
+
+  const finishJob = useCallback(
+    (id: string, ok: boolean, status: number, body: string, err: string) => {
+      if (jobRef.current?.id !== id) return;
+      reply(id, ok, status, body, err);
+      nextJob();
+    },
+    [reply, nextJob],
+  );
+
+  const viaWebView = useCallback((id: string, url: string) => {
+    const j = { id, url };
+    if (jobRef.current) {
+      queue.current.push(j);
+    } else {
+      jobRef.current = j;
+      setJob(j);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!job) return;
+    const t = setTimeout(() => finishJob(job.id, false, 0, '', 'اتصال به بورس برقرار نشد (پاسخی نیامد، ۲۰ ثانیه).'), 20000);
+    return () => clearTimeout(t);
+  }, [job, finishJob]);
 
   const call = useCallback((fn: string, ...args: unknown[]) => {
     const esc = (v: unknown) => JSON.stringify(v).split(String.fromCharCode(0x2028)).join('\\u2028').split(String.fromCharCode(0x2029)).join('\\u2029');
@@ -139,6 +178,10 @@ export default function App() {
           const text = await res.text();
           reply(msg.id, res.ok, res.status, text, '');
         } catch (e) {
+          if (msg.url.startsWith(TSETMC_HOST)) {
+            viaWebView(msg.id, msg.url);
+            return;
+          }
           const why = ctrl.signal.aborted ? 'پاسخی نیامد (۱۵ ثانیه)' : String((e as Error)?.message ?? e).slice(0, 120);
           reply(msg.id, false, 0, '', `اتصال به منبع قیمت برقرار نشد (${why}).`);
         } finally {
@@ -146,7 +189,7 @@ export default function App() {
         }
       }
     },
-    [reply, checkUpdate, installUpdate],
+    [reply, checkUpdate, installUpdate, viaWebView],
   );
 
   useEffect(() => {
@@ -173,6 +216,19 @@ export default function App() {
         overScrollMode="never"
         style={{ flex: 1, backgroundColor: 'transparent' }}
       />
+      {job && (
+        <View pointerEvents="none" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}>
+          <WebView
+            key={job.id}
+            source={{ uri: job.url }}
+            javaScriptEnabled
+            injectedJavaScript={"(function(){var t=document.body?document.body.innerText:'';window.ReactNativeWebView.postMessage(t);})();true;"}
+            onMessage={(e: WebViewMessageEvent) => finishJob(job.id, true, 200, e.nativeEvent.data, '')}
+            onError={(e) => finishJob(job.id, false, 0, '', `اتصال به بورس برقرار نشد (${String(e.nativeEvent.description).slice(0, 100)}).`)}
+            onHttpError={(e) => finishJob(job.id, false, e.nativeEvent.statusCode, '', `پاسخ نامعتبر از سرور بورس (کد ${e.nativeEvent.statusCode}).`)}
+          />
+        </View>
+      )}
     </View>
   );
 }
