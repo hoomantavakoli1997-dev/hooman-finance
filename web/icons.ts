@@ -8,7 +8,7 @@ import { CASH_ID } from '../src/core/types';
 
 type Kind =
   | { t: 'cash' } | { t: 'gold'; label?: string } | { t: 'silver' } | { t: 'stable' } | { t: 'crypto' }
-  | { t: 'stock' } | { t: 'flag'; code: string } | { t: 'currency' } | { t: 'letter'; ch: string } | { t: 'ticker'; text: string } | { t: 'people' };
+  | { t: 'stock' } | { t: 'flag'; code: string } | { t: 'currency' } | { t: 'letter'; ch: string } | { t: 'ticker'; text: string } | { t: 'brand'; slug: string } | { t: 'people' };
 
 export function iconKind(a: { id: string; name: string; unit?: string; kind?: Asset['kind']; priceKeys?: Record<string, string> }): Kind {
   if (a.id === CASH_ID || a.id === 'cash') return { t: 'cash' };
@@ -16,11 +16,14 @@ export function iconKind(a: { id: string; name: string; unit?: string; kind?: As
   if (a.id === 'gold' || k === 'geram18') return { t: 'gold', label: '۱۸' };
   if (/silver|nogre|noghre/.test(k)) return { t: 'silver' };
   if (/geram24|sekee|sekeb|sekke|nim|rob|mesghal|gold|abshodeh|coin/.test(k)) return { t: 'gold' };
-  if (a.id === 'usdt' || /usdt|tether/.test(k)) return { t: 'stable' };
+  if (a.id === 'usdt' || /usdt|tether/.test(k)) return { t: 'brand', slug: 'tether' };
   if (a.id === 'usd' || k === 'price_dollar_rl') return { t: 'flag', code: 'us' };
   const f = /^price_(eur|gbp|jpy|try|aed|cny)/.exec(k);
   if (f) return { t: 'flag', code: f[1] };
-  if (a.kind === 'crypto' || /^crypto/.test(k)) return { t: 'crypto' };
+  if (a.kind === 'crypto' || /^crypto/.test(k)) {
+    const slug = k.replace(/^crypto[-_]/, '').replace(/-(irr|irc)$/, '');
+    return { t: 'brand', slug: ['bitcoin','ethereum','ripple','solana','dogecoin','tron','litecoin','toncoin','usd-coin'].includes(slug) ? slug : 'crypto' };
+  }
   if (a.priceKeys?.tsetmc || (a.kind === 'custom' && a.unit === 'سهم')) return { t: 'ticker', text: [...a.name.trim()].slice(0, 2).join('') || 'سهم' };
   if (a.kind === 'currency') return { t: 'currency' };
   return { t: 'letter', ch: [...a.name.trim()][0] ?? '؟' };
@@ -89,9 +92,55 @@ export function iconSvg(k: Kind): string {
     case 'silver':
       return coin('#7d8791', '#d5dbe1', '#4b535b', '', '<circle cx="20" cy="20" r="7" fill="none" stroke="#9aa4ad" stroke-width="1.4"/>');
     case 'stable':
-      return wrap('<circle cx="20" cy="20" r="16" fill="#26a17b"/><path d="M10 12h20M20 12v17M13 17h14" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>');
+      return wrap('<circle cx="20" cy="20" r="16" fill="#26a17b"/><path d="M9 11h22M20 11v18M12.5 16.5h15" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>');
     case 'crypto':
       return wrap('<circle cx="20" cy="20" r="16" fill="#5a4bd1"/><path d="M20 9l9 5.2v10.4L20 30l-9-5.4V14.2z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><circle cx="20" cy="19.5" r="3" fill="#fff"/>');
+    case 'brand': {
+      const brands: Record<string, { bg: string; mark: string; size?: number }> = {
+        tether: { bg: '#26a17b', mark: '₮', size: 23 }, bitcoin: { bg: '#f7931a', mark: '₿', size: 23 },
+        ethereum: { bg: '#627eea', mark: '◆', size: 23 }, ripple: { bg: '#23292f', mark: 'X', size: 22 },
+        solana: { bg: '#171b2b', mark: '≋', size: 27 }, dogecoin: { bg: '#c2a633', mark: 'Ð', size: 23 },
+        tron: { bg: '#e84142', mark: 'T', size: 23 }, litecoin: { bg: '#345d9d', mark: 'Ł', size: 23 },
+        toncoin: { bg: '#0098ea', mark: 'TON', size: 11 }, 'usd-coin': { bg: '#2775ca', mark: '
+    case 'stock':
+      return wrap('<rect x="4" y="4" width="32" height="32" rx="8" fill="#0f8f8a"/><rect x="10" y="21" width="5" height="9" rx="1" fill="#fff"/><rect x="17.5" y="15" width="5" height="15" rx="1" fill="#fff"/><rect x="25" y="9" width="5" height="21" rx="1" fill="#bff5f1"/>');
+    case 'flag':
+      return flag(k.code);
+    case 'currency':
+      return coin('#5c6b82', '#9fb0c6', '#243247', '¤');
+    case 'ticker':
+      return wrap(`<rect x="3" y="3" width="34" height="34" rx="10" fill="#315b80"/><text x="20" y="25" text-anchor="middle" font-size="${k.text.length > 1 ? 13 : 18}" font-weight="800" fill="#fff" font-family="Vazirmatn,Tahoma,sans-serif">${k.text.replace(/[<>&]/g, '')}</text>`);
+    case 'people':
+      return wrap('<circle cx="20" cy="15" r="6" fill="#6f8fb0"/><path d="M8 33c1.5-7 6-10 12-10s10.500 3 12 10z" fill="#6f8fb0"/>');
+    default:
+      return wrap(`<circle cx="20" cy="20" r="16" fill="#31506f"/><text x="20" y="26" text-anchor="middle" font-size="17" font-weight="800" fill="#fff" font-family="Vazirmatn,Tahoma,sans-serif">${k.ch.replace(/[<>&]/g, '')}</text>`);
+  }
+}
+
+export const assetIcon = (a: Parameters<typeof iconKind>[0]): string => `<span class="ico">${iconSvg(iconKind(a))}</span>`;
+
+export function marketIcon(key: string, category: string, title: string): string {
+  const k = key.toLowerCase();
+  if (category === 'gold') return iconSvg({ t: 'gold', label: /18|geram18/.test(k) ? '۱۸' : '' });
+  if (category === 'metal') return iconSvg({ t: /silver|noghre/.test(k) ? 'silver' : 'gold' });
+  if (category === 'currency') {
+    const code = k === 'price_dollar_rl' ? 'us' : /^price_([a-z]{3})$/.exec(k)?.[1] ?? '';
+    const flagCodes: Record<string, string> = { usd: 'us', eur: 'eur', gbp: 'gbp', jpy: 'jpy', try: 'try', aed: 'aed', cny: 'cny' };
+    return iconSvg(flagCodes[code] ? { t: 'flag', code: flagCodes[code] } : { t: 'currency' });
+  }
+  if (category === 'crypto') {
+    const slug = k.replace(/^crypto[-_]/, '').replace(/-(irr|irc)$/, '');
+    const known = ['tether','bitcoin','ethereum','ripple','solana','dogecoin','tron','litecoin','toncoin','usd-coin'];
+    return iconSvg({ t: 'brand', slug: known.includes(slug) ? slug : 'crypto' });
+  }
+  return iconSvg({ t: 'ticker', text: [...title].filter((c) => c.trim()).slice(0, 2).join('') || '•' });
+}
+, size: 23 },
+        crypto: { bg: '#5a4bd1', mark: '◆', size: 21 },
+      };
+      const b = brands[k.slug] ?? brands.crypto;
+      return wrap(`<circle cx="20" cy="20" r="17" fill="${b.bg}"/><text x="20" y="27" text-anchor="middle" font-size="${b.size ?? 21}" font-weight="800" fill="#fff" font-family="Arial,sans-serif">${b.mark}</text>`);
+    }
     case 'stock':
       return wrap('<rect x="4" y="4" width="32" height="32" rx="8" fill="#0f8f8a"/><rect x="10" y="21" width="5" height="9" rx="1" fill="#fff"/><rect x="17.5" y="15" width="5" height="15" rx="1" fill="#fff"/><rect x="25" y="9" width="5" height="21" rx="1" fill="#bff5f1"/>');
     case 'flag':
