@@ -23,6 +23,8 @@ type Tab = 'home' | 'assets' | 'txs' | 'people' | 'settings';
 interface Settings {
   /** پنهان کردن مبلغ‌ها (برای وقتی دیگران نگاه می‌کنند) */
   hide?: boolean;
+  /** کلید قیمت‌های منتخب برای نمایش در خانه (اگر نباشد، فهرست پیش‌فرض) */
+  favs?: string[];
   unit: 'toman' | 'rial';
   theme: 'system' | 'light' | 'dark';
   font: 'normal' | 'large';
@@ -240,8 +242,37 @@ function navHtml(): string {
     .join('')}</div></nav>`;
 }
 
+/** تازه‌ترین زمان قیمت: بیشینه‌ی زمان نمای بازار و قیمت‌های خودکار دارایی‌ها (به وقت تهران) */
+function lastPriceMs(): number {
+  let t = 0;
+  try { t = snapshotTime(mk().entries); } catch { t = 0; }
+  for (const p of Object.values(store.prices)) {
+    if (p.source !== 'auto') continue;
+    const ms = Date.parse(p.at);
+    if (Number.isFinite(ms) && ms > t) t = ms;
+  }
+  return t;
+}
+
+function lastPriceLabel(): string {
+  const t = lastPriceMs();
+  if (!t) return 'قیمتی ثبت نشده';
+  const d = new Date(t);
+  let time = '';
+  let day = '';
+  try {
+    time = d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit', hour12: false });
+    day = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Tehran' });
+  } catch {
+    time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    day = todayIso(d);
+  }
+  const when = ltr(toFa(time));
+  return day === todayIso() ? `آخرین قیمت: امروز ساعت ${when}` : `آخرین قیمت: ${dateFa(day)} ساعت ${when}`;
+}
+
 function header(title: string, sub = ''): string {
-  return `<header class="top"><h1>${title}</h1><span class="date">${sub || 'امروز ' + dateFa(todayIso())}</span></header>`;
+  return `<header class="top"><h1>${title}</h1><span class="date"><span>${sub || 'امروز ' + dateFa(todayIso())}</span><small class="pt" data-testid="price-time">${lastPriceLabel()}</small></span></header>`;
 }
 
 function sampleNote(): string {
@@ -258,14 +289,18 @@ function pctText(p: number): string {
   return toFa(p.toFixed(1)).replace('.', '٫') + '٪';
 }
 
-function historyChart(): string {
+const RANGES: [string, string][] = [['1w', '۱ هفته'], ['1m', '۱ ماه'], ['3m', '۳ ماه'], ['6m', '۶ ماه'], ['1y', '۱ سال'], ['all', 'همه']];
+
+/** نمودار کوچک روند سرمایه برای داخل کارت اصلی خانه */
+function sparkHtml(): string {
   const all = store.history ?? [];
   const days: Record<string, number> = { '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
   const cutoff = days[view.historyRange] ? Date.now() - days[view.historyRange] * 86400000 : 0;
   const points = all.filter((p) => Date.parse(p.at) >= cutoff && Number.isFinite(Number(p.value)));
-  const ranges: [string, string][] = [['1w', '۱ هفته'], ['1m', '۱ ماه'], ['3m', '۳ ماه'], ['6m', '۶ ماه'], ['1y', '۱ سال'], ['all', 'همه']];
-  const controls = ranges.map(([key, label]) => `<button class="chip" data-action="history-range" data-v="${key}" aria-pressed="${view.historyRange === key}">${label}</button>`).join('');
-  if (!points.length) return `<section class="history card"><div class="between"><b>روند تغییرات سرمایه</b><span class="badge">تاریخچه</span></div><div class="chips">${controls}</div><div class="history-empty">هنوز تاریخچه‌ای ثبت نشده است. پس از ثبت قیمت‌ها و تغییرات مالی، روند سرمایه در این قسمت شکل می‌گیرد.</div></section>`;
+  const chips = RANGES.map(([k, l]) => `<button class="rg" data-action="history-range" data-v="${k}" aria-pressed="${view.historyRange === k}">${l}</button>`).join('');
+  if (points.length < 2) {
+    return `<div class="spark"><div class="spark-empty">روند سرمایه پس از چند ثبت در زمان‌های مختلف نمایش داده می‌شود.</div><div class="rgs">${chips}</div></div>`;
+  }
   const first = Decimal.parse(points[0].value);
   const last = Decimal.parse(points[points.length - 1].value);
   const delta = last.minus(first);
@@ -274,61 +309,58 @@ function historyChart(): string {
   const max = Math.max(...points.map((p) => Number(p.value)));
   const span = max - min || Math.max(Math.abs(max) * 0.02, 1);
   const sampled = points.length > 44 ? points.filter((_, i) => i === 0 || i === points.length - 1 || i % Math.ceil(points.length / 42) === 0) : points;
-  const coords = sampled.map((p, i) => ({ x: 8 + (i / Math.max(1, sampled.length - 1)) * 304, y: 88 - ((Number(p.value) - min) / span) * 70 }));
+  const coords = sampled.map((p, i) => ({ x: 6 + (i / Math.max(1, sampled.length - 1)) * 308, y: 46 - ((Number(p.value) - min) / span) * 38 }));
   const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-  const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} 96 L${coords[0].x.toFixed(1)} 96 Z`;
+  const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} 54 L${coords[0].x.toFixed(1)} 54 Z`;
   const up = !delta.isNegative();
-  const changeLabel = change === null ? '—' : `${change > 0 ? '+' : ''}${toFa(change.toFixed(1)).replace('.', '٫')}٪`;
-  const chartSvg = points.length > 1 ? `<svg class="history-svg" viewBox="0 0 320 104" role="img" aria-label="نمودار روند ارزش سرمایه"><defs><linearGradient id="history-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--teal)" stop-opacity=".25"/><stop offset="1" stop-color="var(--teal)" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#history-fill)"/><path d="${line}" fill="none" stroke="var(--teal-text)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${coords[coords.length - 1].x.toFixed(1)}" cy="${coords[coords.length - 1].y.toFixed(1)}" r="4" fill="var(--teal-text)"/></svg>` : '<div class="history-empty">برای رسم نمودار، دست‌کم دو ثبت در زمان‌های متفاوت لازم است.</div>';
-  return `<section class="history card"><div class="between"><b>روند تغییرات سرمایه</b><span class="badge">${toFa(String(points.length))} ثبت</span></div><div class="history-summary"><div><strong>${money(last)}</strong><small>آخرین ارزش ثبت‌شده</small></div><span class="${up ? 'gain' : 'loss'}">${changeLabel}</span></div>${chartSvg}<div class="history-ends"><span>${dateFa(points[0].at.slice(0, 10))}</span><span>${dateFa(points[points.length - 1].at.slice(0, 10))}</span></div><div class="chips">${controls}</div><p class="history-foot">این نمودار ارزش کل دارایی‌ها و حساب‌ها را نشان می‌دهد؛ واریز و برداشت نیز در تغییر ارزش منعکس می‌شوند و به‌معنای سود یا زیان سرمایه‌گذاری نیستند.</p></section>`;
+  const lbl = change === null ? '—' : `${change > 0 ? '+' : ''}${toFa(change.toFixed(1)).replace('.', '٫')}٪`;
+  return `<div class="spark">
+    <div class="spark-top"><span class="spark-t">روند سرمایه · ${dateFa(points[0].at.slice(0, 10))} تا ${dateFa(points[points.length - 1].at.slice(0, 10))}</span><b class="${up ? 'up' : 'down'}">${ltr(lbl)}</b></div>
+    <svg viewBox="0 0 320 56" class="spark-svg" role="img" aria-label="نمودار روند ارزش سرمایه"><defs><linearGradient id="sp-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#6fe7e0" stop-opacity=".35"/><stop offset="1" stop-color="#6fe7e0" stop-opacity="0"/></linearGradient></defs>
+    <path d="${area}" fill="url(#sp-fill)"/><path d="${line}" fill="none" stroke="#6fe7e0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${coords[coords.length - 1].x.toFixed(1)}" cy="${coords[coords.length - 1].y.toFixed(1)}" r="3.4" fill="#6fe7e0"/></svg>
+    <div class="rgs">${chips}</div></div>`;
 }
 
-interface Slice { key: string; label: string; value: Decimal; color: string }
-
-/** نمودار سهم هر بخش از کل سرمایه‌ی مثبت (نقد، دارایی‌ها، طلب‌ها). بدهی‌ها جدا نوشته می‌شود. */
-function allocationSection(pf: Portfolio, ppl: { receivable: Decimal; payable: Decimal }): string {
-  const raw: { key: string; label: string; value: Decimal }[] = [];
-  if (pf.cash.gt(0)) raw.push({ key: 'cash', label: 'وجه نقد', value: pf.cash });
-  for (const a of pf.assets) if (a.value && a.value.gt(0)) raw.push({ key: a.asset.id, label: a.asset.name, value: a.value });
-  if (ppl.receivable.gt(0)) raw.push({ key: 'recv', label: 'طلب از اشخاص', value: ppl.receivable });
-  const total = raw.reduce((t, x) => t.plus(x.value), Decimal.ZERO);
-  if (raw.length === 0 || total.lte(0)) return '';
-  // حداکثر ۸ رنگ؛ بقیه در «سایر» جمع می‌شوند (بزرگ‌ترین‌ها جدا می‌مانند)
-  const sorted = [...raw].sort((a, b) => b.value.cmp(a.value));
-  const keep = sorted.length > 8 ? sorted.slice(0, 7) : sorted;
-  const rest = sorted.length > 8 ? sorted.slice(7) : [];
-  const slices: Slice[] = keep.map((x) => ({ ...x, color: '' }));
-  if (rest.length) {
-    slices.push({ key: 'other', label: `سایر (${toFa(String(rest.length))} مورد)`, value: rest.reduce((t, x) => t.plus(x.value), Decimal.ZERO), color: '' });
+/** تب «دارایی‌ها»: یک فهرست واحد با سهم هر مورد از کل سرمایه (بدون تکرار) */
+function assetsOverview(pf: Portfolio, ppl: { receivable: Decimal; payable: Decimal }): string {
+  interface Row { key: string; label: string; value: Decimal | null; icon: string; sub: string; extra: string; open?: string }
+  const rows: Row[] = [{ key: 'cash', label: 'وجه نقد', value: pf.cash, icon: `<span class="ico sm">${iconSvg({ t: 'cash' })}</span>`, sub: 'جدا از دارایی‌ها', extra: '' }];
+  for (const a of pf.assets) {
+    rows.push({
+      key: a.asset.id, label: a.asset.name, value: a.value,
+      icon: `<span class="ico sm">${iconSvg(iconKind(a.asset))}</span>`,
+      sub: qty(a.state.quantity, a.asset),
+      extra: a.value ? pnl(a.unrealized) : '',
+      open: a.asset.id,
+    });
   }
-  // رنگ بر اساس هویت (ترتیب ثابت ثبت)، نه رتبه: با تغییر قیمت‌ها رنگ هر دارایی عوض نمی‌شود
-  const order = raw.map((x) => x.key);
-  slices.forEach((sl) => {
-    sl.color = sl.key === 'other' ? 'var(--c-other)' : `var(--c${(order.indexOf(sl.key) % 8) + 1})`;
-  });
-  const fracs = slices.map((sl) => sl.value.div(total).toNumber() * 100);
-  const iconFor = (sl: Slice): string => {
-    if (sl.key === 'cash') return `<span class="ico sm">${iconSvg({ t: 'cash' })}</span>`;
-    if (sl.key === 'recv') return `<span class="ico sm">${iconSvg({ t: 'people' })}</span>`;
-    const asset = store.assets.find((x) => x.id === sl.key);
-    return asset ? `<span class="ico sm">${iconSvg(iconKind(asset))}</span>` : '';
-  };
-  const list = slices
-    .map(
-      (sl, i) => `<div class="ab">
-        <div class="ah"><span class="nm">${iconFor(sl)}<span class="tx">${esc(sl.label)}</span></span><span class="pc">${pctText(fracs[i])}</span></div>
-        <div class="track" role="img" aria-label="${esc(sl.label)}: ${pctText(fracs[i])}"><i style="width:${Math.max(fracs[i], 1).toFixed(2)}%;background:${sl.color}"></i></div>
-        <div class="am">${money(sl.value)}</div></div>`,
-    )
+  if (ppl.receivable.gt(0)) rows.push({ key: 'recv', label: 'طلب از اشخاص', value: ppl.receivable, icon: `<span class="ico sm">${iconSvg({ t: 'people' })}</span>`, sub: 'اشخاص', extra: '' });
+  const total = rows.reduce((t, r) => (r.value && r.value.gt(0) ? t.plus(r.value) : t), Decimal.ZERO);
+  // رنگ بر اساس هویت (ترتیب ثابت)، نه رتبه
+  const order = ['cash', ...store.assets.map((a) => a.id), 'recv'];
+  const sorted = [...rows].sort((a, b) => (b.value?.gt(0) ? 1 : 0) - (a.value?.gt(0) ? 1 : 0) || (b.value ?? Decimal.ZERO).cmp(a.value ?? Decimal.ZERO));
+  const list = sorted
+    .map((r) => {
+      const frac = r.value && r.value.gt(0) && total.gt(0) ? r.value.div(total).toNumber() * 100 : 0;
+      const color = `var(--c${(order.indexOf(r.key) % 8) + 1})`;
+      const valueText = r.value ? `${money(r.value)}${r.extra ? ' · ' + r.extra : ''}` : '<span class="muted">قیمت روز ثبت نشده</span>';
+      const inner = `<div class="ah"><span class="nm">${r.icon}<span class="tx">${esc(r.label)}</span></span><span class="pc">${r.value && r.value.gt(0) ? pctText(frac) : '—'}</span></div>
+        <div class="track" role="img" aria-label="${esc(r.label)}: ${pctText(frac)}"><i style="width:${frac > 0 ? Math.max(frac, 1).toFixed(2) : '0'}%;background:${color}"></i></div>
+        <div class="am"><span>${r.sub}</span><span>${valueText}</span></div>`;
+      return r.open
+        ? `<button class="ab ab-btn" data-action="open-asset" data-v="${esc(r.open)}">${inner}</button>`
+        : `<div class="ab">${inner}</div>`;
+    })
     .join('');
-  const debtNote = ppl.payable.gt(0)
-    ? `<div class="hint">بدهی‌های شما (${money(ppl.payable)}) در این نمودار نیست؛ معادل ${pctText(ppl.payable.div(total).toNumber() * 100)} از جمع بالاست.</div>`
+  const debtNote = ppl.payable.gt(0) && total.gt(0)
+    ? `<div class="hint">بدهی‌های شما (${money(ppl.payable)}) در این درصدها نیست؛ معادل ${pctText(ppl.payable.div(total).toNumber() * 100)} از جمع بالاست.</div>`
     : '';
   const missing = pf.missingPrice.length
-    ? `<div class="hint">برای ${toFa(String(pf.missingPrice.length))} دارایی قیمت روز ثبت نشده و در نمودار نیامده است.</div>`
+    ? `<div class="hint">برای ${toFa(String(pf.missingPrice.length))} دارایی قیمت روز ثبت نشده و در درصدها نیامده است.</div>`
     : '';
-  return `<h2 class="section-title"><span>سهم هر دارایی از سرمایه</span></h2>
-    <section class="alloc" aria-label="سهم هر دارایی از سرمایه">${list}</section>${debtNote}${missing}`;
+  return `<section class="alloc" aria-label="دارایی‌ها و سهم هرکدام از سرمایه">${list}</section>${debtNote}${missing}
+    <div class="hint">سرمایه‌ی خالص = نقد + (مقدار هر دارایی × قیمت روز) + طلب‌ها − بدهی‌ها</div>`;
 }
 
 function stockSearchHtml(f: AssetForm): string {
@@ -398,47 +430,26 @@ async function runStockSearch(f: AssetForm) {
 
 function viewHome(pf: Portfolio): string {
   const assetsValue = pf.assets.reduce((s, a) => (a.value ? s.plus(a.value) : s), Decimal.ZERO);
-  const total = pf.totalValue;
   const ppl = computePeople(peopleData(), todayIso());
   const worth = netWorth(pf.cash, assetsValue, ppl);
   const missing = pf.missingPrice.map((id) => esc(assetName(id)));
 
-  const rows: string[] = [];
-  const pct = (v: Decimal) =>
-    total.gt(0) ? Math.max(0, Math.min(100, v.div(total).toNumber() * 100)).toFixed(1) : '0';
-  rows.push(`<div class="row"><div class="main"><span class="t">وجه نقد</span>
-      <div class="bar" aria-hidden="true"><i style="width:${pct(pf.cash)}%"></i></div></div>
-      <div class="side"><span class="t">${money(pf.cash)}</span></div></div>`);
-  for (const a of pf.assets) {
-    if (a.state.quantity.isZero() && a.state.rows.length === 0) continue;
-    const side = a.value
-      ? `<span class="t">${money(a.value)}</span><span class="s">${pnl(a.unrealized)}</span>`
-      : `<span class="s">قیمت روز ثبت نشده</span>`;
-    rows.push(`<button class="row" data-action="open-asset" data-v="${esc(a.asset.id)}">
-      ${assetIcon(a.asset)}<div class="main"><span class="t">${esc(a.asset.name)}</span>
-      <span class="s">${qty(a.state.quantity, a.asset)}</span>
-      <div class="bar" aria-hidden="true"><i style="width:${a.value ? pct(a.value) : '0'}%"></i></div></div>
-      <div class="side">${side}</div></button>`);
-  }
-
   return `${header('Hooman Finance')}
     ${sampleNote()}
-    <section class="hero" aria-label="خلاصه‌ی دارایی">
+    <section class="hero compact" aria-label="خلاصه‌ی دارایی">
       <div class="between"><span class="label">سرمایه‌ی خالص</span>
         <button class="eye" data-action="toggle-hide" aria-pressed="${hidden()}" aria-label="${hidden() ? 'نمایش مبلغ‌ها' : 'پنهان کردن مبلغ‌ها'}">${hidden() ? EYE_OFF : EYE_ON}</button></div>
       <div class="big">${hidden() ? MASK : ltr(fmtNum(fromRial(worth)))}<span class="u">${unitLabel()}</span></div>
-      <div class="split"><span>نقد: <b>${money(pf.cash, false)}</b></span><span>دارایی‌ها: <b>${money(assetsValue, false)}</b></span></div>
-      <div class="split"><span>طلب‌ها: <b>${money(ppl.receivable, false)}</b></span><span>بدهی‌ها: <b>${money(ppl.payable, false)}</b></span></div>
-      <div class="formula">سرمایه‌ی خالص = نقد + (مقدار هر دارایی × قیمت روز) + طلب‌ها − بدهی‌ها</div>
+      <div class="mini"><span>نقد <b>${money(pf.cash, false)}</b></span><span>دارایی‌ها <b>${money(assetsValue, false)}</b></span><span>طلب‌ها <b>${money(ppl.receivable, false)}</b></span><span>بدهی‌ها <b>${money(ppl.payable, false)}</b></span></div>
+      ${sparkHtml()}
     </section>
-    ${historyChart()}
     ${
       missing.length
         ? `<div class="note"><span>قیمت روز ${missing.join('، ')} ثبت نشده است، پس مجموع بالا ناقص است.</span>
            <button class="btn link" data-action="price" data-v="${esc(pf.missingPrice[0])}">ثبت قیمت روز</button></div>`
         : ''
     }
-    ${allocationSection(pf, ppl)}
+    ${marketSection()}
     <div class="grid2">
       <div class="tile"><span class="k">سود یا زیان فروش‌ها (تحقق‌یافته)</span><span class="v">${pnl(pf.realizedTotal)}</span></div>
       <div class="tile"><span class="k">سود یا زیان دارایی‌های فعلی</span><span class="v">${pnl(pf.unrealizedTotal)}</span></div>
@@ -448,14 +459,11 @@ function viewHome(pf: Portfolio): string {
       <button class="btn" data-action="new-tx" data-asset="" data-type="sell">ثبت فروش</button>
       <button class="btn ghost" data-action="new-tx" data-asset="${CASH_ID}" data-type="deposit">واریز نقد</button>
     </div>
-    <h2 class="section-title"><span>دارایی‌ها</span><button class="btn small ghost" data-action="refresh">به‌روزرسانی قیمت‌ها</button></h2>
-    <div class="list">${rows.join('')}</div>
     ${
       inApp() && upd.status === 'available'
         ? '<div class="note info"><span>نسخه‌ی جدید برنامه آماده است.</span><button class="btn" data-action="update-install">دانلود و نصب</button></div>'
         : ''
-    }
-    ${marketSection()}`;
+    }`;
 }
 
 /* ------------------------------ نمای بازار ------------------------------ */
@@ -494,15 +502,20 @@ function entryTime(e: MarketEntry): string {
   return date === todayIso() ? t : `${dateFa(date)} ${t}`;
 }
 
+const favKeys = (): string[] => store.settings.favs ?? [...PREVIEW_KEYS];
+
 function quoteRow(e: MarketEntry, now: number): string {
   const meta = classify(e.key);
   const stale = isStale(e, now);
   const keyHint = meta.named ? `<bdi dir="ltr">${esc(e.key)}</bdi> · ` : '';
-  return `<button class="row market-row${stale ? ' dim' : ''}" data-action="quote" data-v="${esc(e.key)}">
-    <span class="market-ico">${marketIcon(e.key, meta.category, meta.title)}</span>
-    <div class="main"><span class="t">${esc(meta.title)}${stale ? ' <span class="badge">قدیمی</span>' : ''}</span>
-      <span class="s">${keyHint}${entryTime(e)}${meta.per ? ' · ' + esc(meta.per) : ''}</span></div>
-    <div class="side"><span class="t">${fmtVal(meta, e.price)}</span><span class="s">${changeHtml(e)}</span></div></button>`;
+  const fav = favKeys().includes(e.key);
+  return `<div class="row market-row${stale ? ' dim' : ''}">
+    <button class="star" data-action="fav" data-v="${esc(e.key)}" aria-pressed="${fav}" aria-label="${fav ? 'حذف از منتخب‌های خانه' : 'افزودن به منتخب‌های خانه'}">${fav ? '★' : '☆'}</button>
+    <button class="mr-main" data-action="quote" data-v="${esc(e.key)}">
+      <span class="market-ico">${marketIcon(e.key, meta.category, meta.title)}</span>
+      <div class="main"><span class="t">${esc(meta.title)}${stale ? ' <span class="badge">قدیمی</span>' : ''}</span>
+        <span class="s">${keyHint}${entryTime(e)}${meta.per ? ' · ' + esc(meta.per) : ''}</span></div>
+      <div class="side"><span class="t">${fmtVal(meta, e.price)}</span><span class="s">${changeHtml(e)}</span></div></button></div>`;
 }
 
 /** کهنگی قیمت‌ها در نمای بازار نسبت به تازه‌ترین قیمتِ همان فهرست سنجیده می‌شود؛ عمر کل فهرست جدا اعلام می‌شود */
@@ -530,13 +543,16 @@ const PREVIEW_KEYS = ['geram18', 'price_dollar_rl', 'crypto-tether-irr', 'sekee'
 function marketSection(): string {
   const now = marketRef();
   const by = new Map(mk().entries.map((e) => [e.key, e]));
-  const rows = PREVIEW_KEYS.map((k) => by.get(k))
+  const rows = favKeys().map((k) => by.get(k))
     .filter((e): e is MarketEntry => !!e)
     .map((e) => quoteRow(e, now))
     .join('');
-  return `<h2 class="section-title"><span>نمای بازار</span><button class="btn small ghost" data-action="market-open">همه‌ی قیمت‌ها</button></h2>
+  const empty = favKeys().length
+    ? '<div class="empty">قیمت موارد انتخابی در فهرست فعلی نیست. «به‌روزرسانی» را بزنید.</div>'
+    : '<div class="empty">هنوز موردی انتخاب نکرده‌اید. «انتخاب و همه‌ی قیمت‌ها» را بزنید و ستاره‌ی هر قیمت را روشن کنید.</div>';
+  return `<h2 class="section-title"><span>نمای بازار</span><button class="btn small ghost" data-action="market-open">انتخاب و همه‌ی قیمت‌ها</button></h2>
     ${marketNote()}
-    <div class="list">${rows || '<div class="empty">قیمتی برای نمایش نیست.</div>'}</div>`;
+    <div class="list">${rows || empty}</div>`;
 }
 
 const MARKET_LIMIT = 150;
@@ -566,6 +582,7 @@ function viewMarket(): string {
     <div class="chips" role="group" aria-label="دسته">${chips
       .map(([k, l]) => `<button class="chip" data-action="mcat" data-v="${k}" aria-pressed="${view.mcat === k}">${l}</button>`)
       .join('')}<button class="chip" data-action="mstale" aria-pressed="${view.mstale}">نمایش قیمت‌های قدیمی</button></div>
+    <div class="note info"><span>ستاره‌ی هر قیمت را روشن کنید تا در صفحه‌ی خانه نمایش داده شود.</span></div>
     <div class="muted" id="mcount">${body.count}</div>
     <div class="list" id="mlist">${body.html}</div>
     <div class="note info"><span>نام و واحد فقط برای مواردی نوشته شده که از کلید و بزرگی عدد مطمئن‌ایم. بقیه با کلید اصلی و بدون واحد نمایش داده می‌شوند. قیمت‌هایی که از تازه‌ترین قیمت فهرست بیش از ۶ ساعت (یا ۴ روز برای قیمت‌های روزانه) عقب‌ترند پنهان‌اند.</span></div>`;
@@ -574,24 +591,10 @@ function viewMarket(): string {
 /* ------------------------------ دارایی‌ها ------------------------------ */
 
 function viewAssets(pf: Portfolio): string {
-  const rows = pf.assets
-    .map((a) => {
-      const side = a.value
-        ? `<span class="t">${money(a.value)}</span>`
-        : a.state.quantity.isZero()
-          ? `<span class="s">موجودی صفر</span>`
-          : `<span class="s">بدون قیمت روز</span>`;
-      return `<button class="row" data-action="open-asset" data-v="${esc(a.asset.id)}">
-        ${assetIcon(a.asset)}<div class="main"><span class="t">${esc(a.asset.name)}</span><span class="s">${qty(a.state.quantity, a.asset)}</span></div>
-        <div class="side">${side}</div></button>`;
-    })
-    .join('');
+  const ppl = computePeople(peopleData(), todayIso());
   return `${header('دارایی‌ها')}
-    <div class="list">
-      <div class="row">${assetIcon({ id: CASH_ID, name: 'وجه نقد' })}<div class="main"><span class="t">وجه نقد</span><span class="s">جدا از دارایی‌ها؛ با واریز و برداشت تغییر می‌کند</span></div>
-        <div class="side"><span class="t">${money(pf.cash)}</span></div></div>
-      ${rows}
-    </div>
+    <h2 class="section-title"><span>سهم هر دارایی از سرمایه</span></h2>
+    ${assetsOverview(pf, ppl)}
     <div class="actions">
       <button class="btn" data-action="add-asset">افزودن دارایی</button>
       <button class="btn ghost" data-action="refresh">به‌روزرسانی قیمت‌ها</button>
@@ -1577,6 +1580,13 @@ document.addEventListener('click', (ev) => {
       if (['1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
       render();
       break;
+    case 'fav': {
+      const cur = favKeys();
+      store.settings.favs = cur.includes(v) ? cur.filter((k) => k !== v) : [...cur, v];
+      save();
+      render();
+      break;
+    }
     case 'market-open':
       view.market = true;
       render();
@@ -2073,10 +2083,10 @@ function autoCheckUpdate() {
 }
 
 let refreshing = false;
-async function runRefresh() {
+async function runRefresh(silent = false) {
   if (refreshing) return;
   refreshing = true;
-  toast('در حال دریافت قیمت‌ها…');
+  if (!silent) toast('در حال دریافت قیمت‌ها…');
   try {
     const providers = [tgjuProvider((u) => nativeFetch(u), undefined, undefined, (raw) => {
       store.market = { source: 'tgju', entries: parseMarket(raw) };
@@ -2084,7 +2094,18 @@ async function runRefresh() {
     const stockCodes = store.assets.map((a) => a.priceKeys?.tsetmc).filter((c): c is string => !!c);
     if (stockCodes.length) providers.push(tsetmcProvider((u) => nativeFetch(u), stockCodes));
     const out = await refreshPrices(store.assets, store.prices, providers, { now: Date.now() });
-    showPriceResults(out.prices, out.results, out.errors);
+    if (silent) {
+      // به‌روزرسانی خودکار هنگام باز شدن: بدون پنجره‌ی نتیجه؛ فقط اگر هیچ قیمتی نیامد خبر می‌دهیم
+      store.prices = out.prices;
+      save();
+      if (!modal) render();
+      const any = out.results.some((r) => r.status === 'updated' || r.status === 'unchanged');
+      if (!any && out.errors.length) toast('به‌روزرسانی خودکار قیمت‌ها انجام نشد: ' + friendlyError(out.errors[0].message));
+    } else {
+      showPriceResults(out.prices, out.results, out.errors);
+    }
+  } catch (e) {
+    if (!silent) throw e;
   } finally {
     refreshing = false;
   }
@@ -2159,3 +2180,14 @@ recordHistory();
 if (!store.sample) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
 render();
 autoCheckUpdate();
+
+/** قیمت‌ها هنگام باز شدن اپ و بازگشت به آن خودکار به‌روز می‌شوند (حداکثر هر ۵ دقیقه) */
+let lastAutoRefresh = 0;
+function autoRefresh() {
+  if (!inApp() || Date.now() - lastAutoRefresh < 5 * 60_000) return;
+  lastAutoRefresh = Date.now();
+  void runRefresh(true);
+}
+window.setTimeout(autoRefresh, 800);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') autoRefresh(); });
+window.addEventListener('focus', autoRefresh);

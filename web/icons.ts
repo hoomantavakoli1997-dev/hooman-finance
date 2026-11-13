@@ -104,6 +104,8 @@ function brandIcon(slug: string): string {
   return wrap(svg);
 }
 
+const TICKER_COLORS = ['#315b80', '#0f8f8a', '#6b4fa3', '#b5623a', '#3f7d4e', '#a23b5c', '#4a5ab8', '#8a6d1f'];
+
 export function iconSvg(k: Kind): string {
   switch (k.t) {
     case 'cash':
@@ -125,7 +127,7 @@ export function iconSvg(k: Kind): string {
     case 'currency':
       return coin('#5c6b82', '#9fb0c6', '#243247', '¤');
     case 'ticker':
-      return wrap(`<rect x="3" y="3" width="34" height="34" rx="10" fill="#315b80"/><text x="20" y="25" text-anchor="middle" font-size="${k.text.length > 1 ? 13 : 18}" font-weight="800" fill="#fff" font-family="Vazirmatn,Tahoma,sans-serif">${k.text.replace(/[<>&]/g, '')}</text>`);
+      return wrap(`<rect x="3" y="3" width="34" height="34" rx="10" fill="${TICKER_COLORS[[...k.text].reduce((n, c) => n + c.charCodeAt(0), 0) % TICKER_COLORS.length]}"/><text x="20" y="25" text-anchor="middle" font-size="${k.text.length > 1 ? 13 : 18}" font-weight="800" fill="#fff" font-family="Vazirmatn,Tahoma,sans-serif">${k.text.replace(/[<>&]/g, '')}</text>`);
     case 'people':
       return wrap('<circle cx="20" cy="15" r="6" fill="#6f8fb0"/><path d="M8 33c1.5-7 6-10 12-10s10.500 3 12 10z" fill="#6f8fb0"/>');
     default:
