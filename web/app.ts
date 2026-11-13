@@ -120,9 +120,10 @@ function load(): Store {
       }
     }
   } catch {
-    /* ذخیره‌سازی در دسترس نیست؛ با داده‌ی آزمایشی ادامه می‌دهیم */
+    /* ذخیره‌سازی در دسترس نیست؛ شروع خالی و بدون داده‌ی ساختگی */
   }
-  return seed();
+  // New installations start empty: never present seeded demo transactions as real finances.
+  return emptyStore({ unit: 'toman', theme: 'system', font: 'normal' });
 }
 
 let store: Store = load();
@@ -299,7 +300,7 @@ function sparkHtml(): string {
   const points = all.filter((p) => Date.parse(p.at) >= cutoff && Number.isFinite(Number(p.value)));
   const chips = RANGES.map(([k, l]) => `<button class="rg" data-action="history-range" data-v="${k}" aria-pressed="${view.historyRange === k}">${l}</button>`).join('');
   if (points.length < 2) {
-    return `<div class="spark"><div class="spark-empty">روند سرمایه پس از چند ثبت در زمان‌های مختلف نمایش داده می‌شود.</div><div class="rgs">${chips}</div></div>`;
+    return `<div class="spark"><div class="spark-empty">هنوز تاریخچه‌ی واقعی ثبت نشده است. با ثبت تراکنش‌ها و قیمت‌ها، روند دارایی شما از همین زمان شکل می‌گیرد.</div><div class="rgs">${chips}</div></div>`;
   }
   const first = Decimal.parse(points[0].value);
   const last = Decimal.parse(points[points.length - 1].value);
@@ -434,7 +435,7 @@ function viewHome(pf: Portfolio): string {
   const worth = netWorth(pf.cash, assetsValue, ppl);
   const missing = pf.missingPrice.map((id) => esc(assetName(id)));
 
-  return `${header('Hooman Finance')}
+  return `${header('DARAM', 'مدیریت دارایی‌های شخصی')}
     ${sampleNote()}
     <section class="hero compact" aria-label="خلاصه‌ی دارایی">
       <div class="between"><span class="label">سرمایه‌ی خالص</span>
