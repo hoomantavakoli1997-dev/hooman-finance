@@ -4,7 +4,7 @@ import {
   ChangeResult, Portfolio, TxDraft, parseDec,
 } from '../src/core/engine';
 import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
-import { assetIcon, iconKind, iconSvg } from './icons';
+import { assetIcon, iconKind, iconSvg, marketIcon } from './icons';
 import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
 import { DEFAULT_PRICE_KEYS, PriceResult, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
 import {
@@ -498,7 +498,8 @@ function quoteRow(e: MarketEntry, now: number): string {
   const meta = classify(e.key);
   const stale = isStale(e, now);
   const keyHint = meta.named ? `<bdi dir="ltr">${esc(e.key)}</bdi> · ` : '';
-  return `<button class="row${stale ? ' dim' : ''}" data-action="quote" data-v="${esc(e.key)}">
+  return `<button class="row market-row${stale ? ' dim' : ''}" data-action="quote" data-v="${esc(e.key)}">
+    <span class="market-ico">${marketIcon(e.key, meta.category, meta.title)}</span>
     <div class="main"><span class="t">${esc(meta.title)}${stale ? ' <span class="badge">قدیمی</span>' : ''}</span>
       <span class="s">${keyHint}${entryTime(e)}${meta.per ? ' · ' + esc(meta.per) : ''}</span></div>
     <div class="side"><span class="t">${fmtVal(meta, e.price)}</span><span class="s">${changeHtml(e)}</span></div></button>`;
