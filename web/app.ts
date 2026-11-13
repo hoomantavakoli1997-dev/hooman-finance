@@ -716,7 +716,7 @@ function recordHistory() {
   if (store.sample) return;
   try {
     const pf0 = computePortfolio(store.assets, store.txs, store.prices);
-    const cash = pf0.cash.plus(cashEffect(peopleData()));
+    const cash = pf0.cash;
     const assetsValue = pf0.assets.reduce((sum, a) => a.value ? sum.plus(a.value) : sum, Decimal.ZERO);
     const worth = netWorth(cash, assetsValue, computePeople(peopleData(), todayIso()));
     if (worth.isNegative()) return;
