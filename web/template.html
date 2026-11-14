@@ -65,7 +65,8 @@ bdi { unicode-bidi: isolate; }
 
 /* header */
 .top { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-.top h1 { margin: 0; font-size: 1.35rem; font-weight: 800; }
+.top h1 { margin: 0; font-size: 1.35rem; font-weight: 800; display:flex; align-items:center; gap:.55rem; }
+.top h1::before { content:'D'; display:inline-grid; place-items:center; width:2rem; height:2rem; border-radius:.7rem; color:#f2c66d; background:linear-gradient(145deg,#123c66,#0b1f3a); border:1px solid rgba(44,210,205,.45); box-shadow:0 3px 12px rgba(11,31,58,.18); font-size:1.15rem; font-weight:800; }
 .top .date { color: var(--muted); font-size: .9rem; }
 .back { background: none; border: 0; color: var(--teal-text); font-weight: 600; padding: .25rem 0; min-height: 2.5rem; }
 
@@ -194,6 +195,11 @@ button.row:active { transform: scale(.992); }
   .sheet { animation: rise .18s ease-out; }
   @keyframes rise { from { transform: translateY(1.5rem); opacity: .4; } to { transform: none; opacity: 1; } }
 }
+
+/* DARAM v27 identity polish */
+.hero { border:1px solid rgba(111,231,224,.14); }
+.ico,.market-ico { border-radius:1rem; }
+.market-ico svg,.ico svg { shape-rendering:geometricPrecision; }
 
 /* v17 visual refinement: retain the navy/turquoise identity, improve depth and hierarchy */
 .hero { isolation:isolate; background:linear-gradient(132deg,#082746 0%,var(--navy) 58%,color-mix(in srgb,var(--teal) 24%,var(--navy)) 100%); }
