@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths: ['web/dist/pages/**', 'pwa/**', '.github/workflows/pages.yml']
+  schedule:
+    - cron: '7,37 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +32,17 @@ jobs:
           cp pwa/manifest.webmanifest pwa/icon-192.png pwa/icon-512.png _site/
           sed "s/__VERSION__/${GITHUB_SHA::8}/" pwa/sw.js > _site/sw.js
           touch _site/.nojekyll
+      - name: Fetch latest TGJU prices (same-origin snapshot for the web version)
+        run: |
+          mkdir -p _site/prices
+          curl -fsS --max-time 30 --retry 2 -A "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36" \
+            https://call.tgju.org/ajax.json -o _site/prices/tgju.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('_site/prices/tgju.json'))
+          assert isinstance(d.get('current'), dict) and len(d['current']) > 20, 'unexpected TGJU response'
+          print('quotes:', len(d['current']))
+          PY
       - uses: actions/configure-pages@v5
         with:
           enablement: true

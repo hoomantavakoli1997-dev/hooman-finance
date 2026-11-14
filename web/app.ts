@@ -8,7 +8,7 @@ import {
 import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
 import { assetIcon, iconKind, iconSvg, marketIcon } from './icons';
 import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
-import { DEFAULT_PRICE_KEYS, PriceResult, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
+import { DEFAULT_PRICE_KEYS, PriceResult, TGJU_URL, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
 import {
   CATEGORIES, CategoryId, MarketEntry, classify, isStale, parseMarket, searchMarket, snapshotTime,
 } from '../src/core/market';
@@ -2791,7 +2791,11 @@ const pendingFetch = new Map<string, Pending>();
 
 function nativeFetch(url: string) {
   const rn = (window as unknown as { ReactNativeWebView?: RNBridge }).ReactNativeWebView;
-  if (!rn) return fetch(url);
+  if (!rn) {
+    // نسخه‌ی وب روی GitHub Pages: مرورگر اجازه‌ی خواندن مستقیم TGJU را نمی‌دهد؛ یک نسخه‌ی خودکارِ کنار صفحه خوانده می‌شود
+    if (url === TGJU_URL && /\.github\.io$/.test(location.hostname)) return fetch('prices/tgju.json?t=' + Date.now(), { cache: 'no-store' });
+    return fetch(url);
+  }
   return new Promise<{ ok: boolean; status: number; text(): Promise<string> }>((resolve, reject) => {
     const id = nid('f');
     pendingFetch.set(id, { resolve, reject });
