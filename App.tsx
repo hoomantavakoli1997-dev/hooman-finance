@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, BackHandler, Linking, Platform, StatusBar, View } from 'react-native';
+import { AppState, Animated, BackHandler, Easing, Linking, Platform, StatusBar, Text, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system';
@@ -26,6 +26,18 @@ interface WvJob { id: string; url: string }
 
 export default function App() {
   const web = useRef<WebView>(null);
+  const [showBrandIntro, setShowBrandIntro] = useState(true);
+  const introScale = useRef(new Animated.Value(0.72)).current;
+  const introOpacity = useRef(new Animated.Value(1)).current;
+  const introSpin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(introScale, { toValue: 1, friction: 5, tension: 55, useNativeDriver: true }),
+      Animated.timing(introSpin, { toValue: 1, duration: 1500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+    const fade = setTimeout(() => Animated.timing(introOpacity, { toValue: 0, duration: 420, useNativeDriver: true }).start(({ finished }) => { if (finished) setShowBrandIntro(false); }), 1850);
+    return () => clearTimeout(fade);
+  }, [introOpacity, introScale, introSpin]);
   // مرورگر نامرئی برای بورس: اگر fetch بومی به سرور بورس نرسید (مثلاً به‌خاطر گواهی ناقص سرور)،
   // همان آدرس را مثل مرورگر باز می‌کنیم و متن صفحه را برمی‌داریم. درخواست‌ها یکی‌یکی انجام می‌شود.
   const [job, setJob] = useState<WvJob | null>(null);
@@ -166,7 +178,7 @@ export default function App() {
         const purpose = msg.purpose;
         void (async () => {
           try {
-            const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'باز کردن Hooman Finance', cancelLabel: 'استفاده از رمز', disableDeviceFallback: true });
+            const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'باز کردن دارام', cancelLabel: 'استفاده از رمز', disableDeviceFallback: true });
             call('__bioReply', { ok: r.success, purpose });
           } catch {
             call('__bioReply', { ok: false, purpose });
@@ -263,6 +275,20 @@ export default function App() {
         overScrollMode="never"
         style={{ flex: 1, backgroundColor: 'transparent' }}
       />
+      {showBrandIntro && (
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50, elevation: 50, backgroundColor: '#0b1f3a', alignItems: 'center', justifyContent: 'center', opacity: introOpacity }}>
+          <Animated.View style={{ width: 116, height: 116, alignItems: 'center', justifyContent: 'center', transform: [{ scale: introScale }] }}>
+            <Animated.View style={{ position: 'absolute', width: 108, height: 108, borderRadius: 54, borderWidth: 2, borderColor: 'rgba(44,210,205,.72)', borderRightColor: 'rgba(44,210,205,.12)', transform: [{ rotate: introSpin.interpolate({ inputRange: [0, 1], outputRange: ['-90deg', '270deg'] }) }] }} />
+            <View style={{ width: 82, height: 82, borderRadius: 26, backgroundColor: '#123c66', borderWidth: 1, borderColor: 'rgba(111,231,224,.35)', alignItems: 'center', justifyContent: 'center', shadowColor: '#2cd2cd', shadowOpacity: 0.28, shadowRadius: 22, elevation: 12 }}>
+              <Text style={{ color: '#f2c66d', fontSize: 53, lineHeight: 65, fontWeight: '800', includeFontPadding: false }}>D</Text>
+            </View>
+          </Animated.View>
+          <Animated.View style={{ opacity: introOpacity, alignItems: 'center', marginTop: 25 }}>
+            <Text style={{ color: '#f5f8fb', fontSize: 27, fontWeight: '800', letterSpacing: 5 }}>DARAM</Text>
+            <Text style={{ color: '#8edbd7', fontSize: 14, marginTop: 5 }}>همه دارایی‌هایت، یک‌جا.</Text>
+          </Animated.View>
+        </Animated.View>
+      )}
       {job && (
         <View pointerEvents="none" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}>
           <WebView
