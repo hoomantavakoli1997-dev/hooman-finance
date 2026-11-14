@@ -46,6 +46,7 @@
 }
 
 html { font-size: 17px; }
+html[data-font="small"] { font-size: 15px; }
 html[data-font="large"] { font-size: 20px; }
 body {
   background: var(--bg); color: var(--ink); font-family: var(--font); line-height: 1.65;
@@ -261,8 +262,33 @@ button.row:active { transform: scale(.992); }
 .ab-btn { background: none; border: 0; padding: .15rem 0; width: 100%; text-align: start; font: inherit; color: inherit; cursor: pointer; border-radius: .6rem; }
 .ab-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .ab .am { display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap; }
+
+/* --- قفل برنامه --- */
+#lock { position: fixed; inset: 0; z-index: 200; background: var(--bg); color: var(--ink); display: flex; align-items: center; justify-content: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); overflow-y: auto; }
+#lock[hidden] { display: none; }
+.lockscr { width: 100%; max-width: 21rem; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+.lk-brand { font-weight: 800; font-size: 1.35rem; color: var(--teal-text); }
+.lk-title { font-weight: 700; }
+.lk-dots { display: flex; gap: .9rem; margin: .2rem 0; }
+.lk-dots i { width: 1rem; height: 1rem; border-radius: 50%; border: 2px solid var(--teal-text); display: block; }
+.lk-dots i.on { background: var(--teal-text); }
+.lk-msg { min-height: 1.5rem; text-align: center; color: var(--loss); font-size: .9rem; }
+.lk-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; width: 100%; direction: ltr; }
+.lk-pad button { min-height: 4rem; border-radius: 1.2rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 1.6rem; font-weight: 700; cursor: pointer; }
+.lk-pad button:active { background: var(--surface-2); }
+.lk-pad button:disabled { opacity: .45; }
+.lk-pad button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.pad-wrap { display: flex; justify-content: center; padding: .5rem 0; }
+.pat { position: relative; width: min(17rem, 78vw); aspect-ratio: 1; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); direction: ltr; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pat.off { opacity: .45; }
+.pat-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pat-svg polyline { fill: none; stroke: var(--teal-text); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+.pd { place-self: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; background: var(--muted); transition: transform .1s, background .1s; pointer-events: none; }
+.pd.on { background: var(--teal-text); transform: scale(1.6); }
 </style>
 <div id="app" dir="rtl" lang="fa"></div>
 <div id="modal" dir="rtl" lang="fa"></div>
 <div id="toast" dir="rtl" lang="fa"></div>
+<div id="lock" dir="rtl" lang="fa" hidden></div>
 <script>/*__BUNDLE__*/</script>

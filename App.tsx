@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, Linking, Platform, StatusBar, View } from 'react-native';
+import { AppState, BackHandler, Linking, Platform, StatusBar, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as LocalAuthentication from 'expo-local-authentication';
 import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
 
@@ -36,6 +37,12 @@ export default function App() {
     web.current?.injectJavaScript(
       `window.__bridgeReply && window.__bridgeReply(${esc(id)}, ${ok}, ${status}, ${esc(body)}, ${esc(err)}); true;`,
     );
+  }, []);
+
+  // وضعیت برنامه (پیش‌زمینه/پس‌زمینه) برای قفل خودکار
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => web.current?.injectJavaScript(`window.__appState && window.__appState(${JSON.stringify(st)}); true;`));
+    return () => sub.remove();
   }, []);
 
   const nextJob = useCallback(() => {
@@ -134,7 +141,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -142,6 +149,29 @@ export default function App() {
       }
       if (msg.type === 'exit') {
         BackHandler.exitApp();
+        return;
+      }
+      if (msg.type === 'bio-check') {
+        void (async () => {
+          try {
+            const ok = (await LocalAuthentication.hasHardwareAsync()) && (await LocalAuthentication.isEnrolledAsync());
+            call('__bioAvail', { ok });
+          } catch {
+            call('__bioAvail', { ok: false });
+          }
+        })();
+        return;
+      }
+      if (msg.type === 'bio-auth') {
+        const purpose = msg.purpose;
+        void (async () => {
+          try {
+            const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'باز کردن Hooman Finance', cancelLabel: 'استفاده از رمز', disableDeviceFallback: true });
+            call('__bioReply', { ok: r.success, purpose });
+          } catch {
+            call('__bioReply', { ok: false, purpose });
+          }
+        })();
         return;
       }
       if (msg.type === 'share-file' && typeof msg.text === 'string' && typeof msg.name === 'string') {
@@ -223,6 +253,7 @@ export default function App() {
       <WebView
         ref={web}
         originWhitelist={['*']}
+        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; true;`}
         source={{ html: appHtml, baseUrl: 'https://hooman-finance.app/' }}
         javaScriptEnabled
         domStorageEnabled

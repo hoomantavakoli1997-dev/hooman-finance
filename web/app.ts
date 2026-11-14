@@ -1,3 +1,4 @@
+import { AUTO_LOCK_OPTIONS, DEFAULT_AUTO_LOCK, PATTERN_MIN, PIN_MAX, PIN_MIN, hashSecret, isValidSecret, lockoutMs, normalizePin, verifySecret, type LockKind, type PinRecord } from '../src/core/lock';
 import { BackupError, MIN_PASSPHRASE, decryptBackup, encryptBackup } from '../src/core/backup';
 import { Decimal } from '../src/core/decimal';
 import {
@@ -28,9 +29,11 @@ interface Settings {
   favs?: string[];
   /** آخرین باری که فایل پشتیبان ساخته شد (ISO) */
   lastBackup?: string;
+  /** قفل برنامه: هش رمز، اثر انگشت و مدت قفل خودکار (ثانیه) */
+  lock?: PinRecord & { bio?: boolean; after?: number };
   unit: 'toman' | 'rial';
   theme: 'system' | 'light' | 'dark';
-  font: 'normal' | 'large';
+  font: 'small' | 'normal' | 'large';
 }
 interface MarketSnapshot {
   source: 'sample' | 'tgju' | 'pasted';
@@ -169,6 +172,8 @@ const toRialDec = (v: Decimal) => (isToman() ? v.mul(10) : v);
 const ltr = (s: string) => `<bdi dir="ltr" class="num">${s}</bdi>`;
 const MASK = '<span class="num">••••••</span>';
 const hidden = () => !!store.settings.hide;
+/** قیمت‌های عمومی بازار (طلا، دلار، سهم…) به دارایی شخص ربطی ندارند؛ با پنهان‌کردن مبلغ‌ها پنهان نمی‌شوند */
+const publicMoney = (rial: Decimal, unit = true) => ltr(fmtNum(fromRial(rial))) + (unit ? ` <span class="u">${unitLabel()}</span>` : '');
 const money = (rial: Decimal, unit = true) =>
   (hidden() ? MASK : ltr(fmtNum(fromRial(rial)))) + (unit ? ` <span class="u">${unitLabel()}</span>` : '');
 
@@ -485,7 +490,7 @@ function fmtVal(meta: EntryMeta, s: string): string {
   } catch {
     return '—';
   }
-  if (meta.unit === 'irr') return money(d);
+  if (meta.unit === 'irr') return publicMoney(d);
   if (meta.unit === 'usd') return ltr(fmtNum(d, 4)) + ' <span class="u">دلار</span>';
   return ltr(fmtNum(d, 4));
 }
@@ -627,7 +632,7 @@ function viewAssetDetail(id: string, pf: Portfolio): string {
         .join('')
     : `<div class="empty">هنوز معامله‌ای برای این دارایی ثبت نشده است.</div>`;
   const priceTile = price
-    ? `<span class="v">${money(parseDec(price.price) as Decimal)}</span>
+    ? `<span class="v">${publicMoney(parseDec(price.price) as Decimal)}</span>
        <span class="k">${priceLabel(price)}</span>`
     : `<span class="v muted">ثبت نشده</span><span class="k">هیچ قیمتی حدس زده نمی‌شود</span>`;
   return `<div class="top"><button class="back" data-action="back">← دارایی‌ها</button></div>
@@ -1086,13 +1091,17 @@ function seg(action: string, cur: string, opts: [string, string][]): string {
 const SUPPORT_ID = '@Hooman_tavakoli75';
 const SUPPORT_URL = 'https://t.me/Hooman_tavakoli75';
 
+const installedBuild = (): number => Number((window as unknown as { __APP_BUILD?: number }).__APP_BUILD) || upd.current;
+
 function updateSection(): string {
   if (!inApp()) return '';
+  const cur = installedBuild();
+  const verLine = (label: string, n: number) => `<span>${label}: <b>${n ? toFa(String(n)) + ' ' + ltr('(apk-' + n + ')') : '—'}</b></span>`;
   const mb = (b: number) => (b ? ` (${toFa((b / 1048576).toFixed(0))} مگابایت)` : '');
   let body: string;
   switch (upd.status) {
     case 'checking': body = '<span>در حال بررسی…</span>'; break;
-    case 'none': body = '<span>برنامه‌ی شما به‌روز است.</span><button class="btn link" data-action="update-check">بررسی دوباره</button>'; break;
+    case 'none': body = '<span>برنامه‌ی شما به‌روز است (آخرین نسخه‌ی منتشرشده همین است).</span><button class="btn link" data-action="update-check">بررسی دوباره</button>'; break;
     case 'available':
       body = `<span>نسخه‌ی جدید آماده است${mb(upd.size)}. داده‌های شما پاک نمی‌شود.</span>
         <button class="btn" data-action="update-install">دانلود و نصب</button>`;
@@ -1103,7 +1112,7 @@ function updateSection(): string {
     default: body = '<button class="btn ghost" data-action="update-check">بررسی به‌روزرسانی</button>';
   }
   return `<h2 class="section-title">به‌روزرسانی برنامه</h2>
-    <div class="note info">${body}</div>`;
+    <div class="note info">${verLine('نسخه‌ی نصب‌شده', cur)}${verLine('آخرین نسخه‌ی منتشرشده', upd.latest)}${body}</div>`;
 }
 
 /* ------------------------------ پشتیبان‌گیری ------------------------------ */
@@ -1142,7 +1151,7 @@ async function makeBackup() {
   setErr('');
   try {
     const stamp = new Date().toISOString();
-    const text = await encryptBackup(JSON.stringify({ app: 'hooman-finance', at: stamp, store }), f.pass);
+    const text = await encryptBackup(JSON.stringify({ app: 'hooman-finance', at: stamp, store: { ...store, settings: { ...store.settings, lock: undefined } } }), f.pass);
     const name = `hooman-finance-backup-${todayIso()}.hfbackup`;
     store.settings.lastBackup = stamp;
     save();
@@ -1187,12 +1196,259 @@ async function restoreCheck() {
 function restoreApply() {
   if (modal?.kind !== 'restore' || !modal.f.parsed) return;
   try { localStorage.setItem('hooman-finance-before-restore', JSON.stringify(store)); } catch { /* ignore */ }
+  const keepLock = store.settings.lock;
   store = modal.f.parsed;
+  if (keepLock) store.settings.lock = keepLock;
+  else delete store.settings.lock;
   view.assetId = null;
   save();
   closeModal();
   render();
   toast('اطلاعات از پشتیبان بازیابی شد.');
+}
+
+/* ------------------------------ قفل برنامه ------------------------------ */
+
+const LOCKFAIL_KEY = 'hooman-finance-lockfail';
+const lk = { locked: !!store.settings.lock, cover: false, entry: '', msg: '', busy: false, hiddenAt: 0, bioAvail: false, forgot: false };
+let lkTick: number | undefined;
+
+function readFail(): { fails: number; until: number } {
+  try {
+    const o = JSON.parse(localStorage.getItem(LOCKFAIL_KEY) ?? '{}') as { fails?: number; until?: number };
+    return { fails: Number(o.fails) || 0, until: Number(o.until) || 0 };
+  } catch {
+    return { fails: 0, until: 0 };
+  }
+}
+function writeFail(f: { fails: number; until: number }) {
+  try { localStorage.setItem(LOCKFAIL_KEY, JSON.stringify(f)); } catch { /* ignore */ }
+}
+
+function renderLock() {
+  const lockEl = document.getElementById('lock') as HTMLElement | null;
+  const lock = store.settings.lock;
+  if (!lockEl) return;
+  const show = !!lock && (lk.locked || lk.cover);
+  lockEl.hidden = !show;
+  appEl.toggleAttribute('inert', show);
+  if (!show || !lock) { lockEl.innerHTML = ''; return; }
+  const brand = '<div class="lk-brand">Hooman Finance</div>';
+  if (!lk.locked) { lockEl.innerHTML = `<div class="lockscr">${brand}</div>`; return; }
+  if (lk.forgot) {
+    lockEl.innerHTML = `<div class="lockscr">${brand}
+      <div class="note"><span>اگر رمز یا الگو را فراموش کرده‌اید، تنها راه این است که همه‌ی اطلاعات این برنامه از روی این گوشی پاک شود و قفل برداشته شود. بعد می‌توانید از فایل پشتیبان (تنظیمات ← بازیابی) اطلاعاتتان را برگردانید. اگر پشتیبان ندارید، اطلاعات از بین می‌رود.</span></div>
+      <button class="btn" data-action="lk-forgot-yes">پاک کردن اطلاعات و برداشتن قفل</button>
+      <button class="btn ghost" data-action="lk-forgot-no">انصراف</button></div>`;
+    return;
+  }
+  const wait = Math.max(0, Math.ceil((readFail().until - Date.now()) / 1000));
+  const pattern = lock.kind === 'pattern';
+  const msg = wait ? `چند بار اشتباه وارد شد. ${toFa(String(wait))} ثانیه صبر کنید.` : lk.msg;
+  const bioBtn = lock.bio && lk.bioAvail ? '<button class="btn ghost" data-action="lk-bio">باز کردن با اثر انگشت</button>' : '';
+  if (pattern) {
+    lockEl.innerHTML = `<div class="lockscr">${brand}
+      <div class="lk-title">الگو را بکشید</div>
+      <div class="lk-msg" role="alert">${esc(msg)}</div>
+      ${patternPadHtml('unlock', !!wait)}
+      ${bioBtn}
+      <button class="btn link" data-action="lk-forgot">الگو را فراموش کرده‌ام</button></div>`;
+  } else {
+    const dots = Array.from({ length: lock.len }, (_, i) => `<i class="${i < lk.entry.length ? 'on' : ''}"></i>`).join('');
+    const key = (d: string) => `<button data-action="lk-digit" data-v="${d}" aria-label="${toFa(d)}"${wait ? ' disabled' : ''}>${toFa(d)}</button>`;
+    const bio = lock.bio && lk.bioAvail ? '<button data-action="lk-bio" aria-label="اثر انگشت">☝︎</button>' : '<span></span>';
+    lockEl.innerHTML = `<div class="lockscr">${brand}
+      <div class="lk-title">رمز را وارد کنید</div>
+      <div class="lk-dots" role="img" aria-label="${toFa(String(lk.entry.length))} رقم از ${toFa(String(lock.len))}">${dots}</div>
+      <div class="lk-msg" role="alert">${esc(msg)}</div>
+      <div class="lk-pad">${['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(key).join('')}${bio}${key('0')}<button data-action="lk-del" aria-label="پاک کردن یک رقم">⌫</button></div>
+      <button class="btn link" data-action="lk-forgot">رمز را فراموش کرده‌ام</button></div>`;
+  }
+  if (wait && lkTick === undefined) lkTick = window.setInterval(() => { renderLock(); if (readFail().until <= Date.now()) { window.clearInterval(lkTick); lkTick = undefined; } }, 1000);
+}
+
+function engageLock() {
+  if (!store.settings.lock) return;
+  lk.locked = true; lk.cover = false; lk.entry = ''; lk.msg = ''; lk.forgot = false;
+  renderLock();
+  if (store.settings.lock.bio && lk.bioAvail) window.setTimeout(() => toNative({ type: 'bio-auth', purpose: 'unlock' }), 350);
+}
+
+function unlockNow() {
+  writeFail({ fails: 0, until: 0 });
+  lk.locked = false; lk.cover = false; lk.entry = ''; lk.msg = '';
+  renderLock();
+  render();
+}
+
+async function lkSubmit(secret = lk.entry) {
+  const lock = store.settings.lock;
+  if (!lock || lk.busy) return;
+  lk.busy = true;
+  let ok = false;
+  try { ok = await verifySecret(secret, lock); } finally { lk.busy = false; }
+  if (ok) { unlockNow(); return; }
+  const fails = readFail().fails + 1;
+  const ms = lockoutMs(fails);
+  writeFail({ fails, until: ms ? Date.now() + ms : 0 });
+  lk.entry = '';
+  lk.msg = ms ? '' : `${lock.kind === 'pattern' ? 'الگو' : 'رمز'} اشتباه است.${fails >= 3 ? ` ${toFa(String(5 - fails))} بار دیگر مجاز است.` : ''}`;
+  renderLock();
+}
+
+function lkDigit(d: string) {
+  const lock = store.settings.lock;
+  if (!lock || !lk.locked || lk.busy || readFail().until > Date.now() || lk.entry.length >= lock.len) return;
+  lk.entry += d;
+  lk.msg = '';
+  renderLock();
+  if (lk.entry.length === lock.len) void lkSubmit();
+}
+
+/** برنامه به پس‌زمینه رفت یا برگشت (از اندروید یا مرورگر) */
+function appVisibility(state: 'background' | 'active') {
+  const lock = store.settings.lock;
+  if (!lock) return;
+  if (state === 'background') {
+    if (!lk.locked) { lk.hiddenAt = Date.now(); lk.cover = true; renderLock(); }
+    return;
+  }
+  if (lk.locked) return;
+  if (Date.now() - lk.hiddenAt >= (lock.after ?? DEFAULT_AUTO_LOCK) * 1000) engageLock();
+  else { lk.cover = false; renderLock(); }
+}
+
+/* ------------------------------ صفحه‌ی الگو ------------------------------ */
+
+/** اگر خط از روی نقطه‌ی میانیِ هنوز انتخاب‌نشده بگذرد، آن نقطه هم وارد الگو می‌شود (مثل قفل الگوی اندروید) */
+const PAT_MID: Record<string, string> = { '13': '2', '31': '2', '46': '5', '64': '5', '79': '8', '97': '8', '17': '4', '71': '4', '28': '5', '82': '5', '39': '6', '93': '6', '19': '5', '91': '5', '37': '5', '73': '5' };
+const patCenter = (n: number) => ({ x: (((n - 1) % 3) + 0.5) * (100 / 3), y: (Math.floor((n - 1) / 3) + 0.5) * (100 / 3) });
+
+function patternPadHtml(id: string, disabled = false): string {
+  const dots = Array.from({ length: 9 }, (_, i) => `<span class="pd" data-d="${i + 1}"></span>`).join('');
+  return `<div class="pat${disabled ? ' off' : ''}" data-pad="${id}" role="group" aria-label="صفحه‌ی الگو؛ دست‌کم ${toFa(String(PATTERN_MIN))} نقطه را به‌هم وصل کنید"><svg viewBox="0 0 100 100" class="pat-svg" aria-hidden="true"><polyline points=""/></svg>${dots}</div>`;
+}
+
+let padState: { id: string; el: HTMLElement; seq: string } | null = null;
+
+function padMove(ev: PointerEvent) {
+  if (!padState) return;
+  const r = padState.el.getBoundingClientRect();
+  const px = ((ev.clientX - r.left) / r.width) * 100;
+  const py = ((ev.clientY - r.top) / r.height) * 100;
+  for (let n = 1; n <= 9; n++) {
+    const c = patCenter(n);
+    if (Math.hypot(px - c.x, py - c.y) > 11 || padState.seq.includes(String(n))) continue;
+    const last = padState.seq.slice(-1);
+    const mid = last ? PAT_MID[last + n] : undefined;
+    if (mid && !padState.seq.includes(mid)) padState.seq += mid;
+    padState.seq += String(n);
+  }
+  const pts = [...padState.seq].map((d) => patCenter(Number(d)));
+  if (pts.length) pts.push({ x: Math.max(0, Math.min(100, px)), y: Math.max(0, Math.min(100, py)) });
+  padState.el.querySelector('polyline')?.setAttribute('points', pts.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' '));
+  padState.el.querySelectorAll<HTMLElement>('.pd').forEach((d) => d.classList.toggle('on', padState!.seq.includes(d.dataset.d ?? '')));
+}
+
+function padEnd() {
+  if (!padState) return;
+  const { id, el, seq } = padState;
+  padState = null;
+  el.querySelector('polyline')?.setAttribute('points', [...seq].map((d) => `${patCenter(Number(d)).x.toFixed(1)},${patCenter(Number(d)).y.toFixed(1)}`).join(' '));
+  window.setTimeout(() => {
+    el.querySelector('polyline')?.setAttribute('points', '');
+    el.querySelectorAll('.pd.on').forEach((d) => d.classList.remove('on'));
+  }, 350);
+  if (!seq) return;
+  if (seq.length < PATTERN_MIN) {
+    const m = `دست‌کم ${toFa(String(PATTERN_MIN))} نقطه را وصل کنید.`;
+    if (id === 'unlock') { lk.msg = m; window.setTimeout(renderLock, 400); } else setErr(m);
+    return;
+  }
+  if (id === 'unlock') void lkSubmit(seq);
+  else void lockPatternStep(seq);
+}
+
+document.addEventListener('pointerdown', (ev) => {
+  const el = (ev.target as HTMLElement).closest?.('.pat') as HTMLElement | null;
+  if (!el || el.classList.contains('off')) return;
+  ev.preventDefault();
+  padState = { id: el.dataset.pad ?? '', el, seq: '' };
+  try { el.setPointerCapture(ev.pointerId); } catch { /* ignore */ }
+  padMove(ev);
+});
+document.addEventListener('pointermove', (ev) => padMove(ev));
+document.addEventListener('pointerup', padEnd);
+document.addEventListener('pointercancel', padEnd);
+
+function lockSection(): string {
+  const l = store.settings.lock;
+  if (!l) {
+    return `<h2 class="section-title">قفل برنامه</h2>
+    <div class="note info"><span>با قفل، هر بار که برنامه را باز می‌کنید (و پس از مدتی که از آن بیرون رفته‌اید) باید رمز عددی یا الگو را وارد کنید. این قفل جلوی دیدن اطلاعات توسط دیگران را می‌گیرد؛ اطلاعات را رمزگذاری نمی‌کند، پس قفل صفحه‌ی خود گوشی را هم نگه دارید.</span>
+      <button class="btn" data-action="lock-open" data-v="enable">فعال کردن قفل</button></div>`;
+  }
+  return `<h2 class="section-title">قفل برنامه</h2>
+    <div class="field"><span class="lab">قفل خودکار بعد از خروج از برنامه</span>${seg('set-autolock', String(l.after ?? DEFAULT_AUTO_LOCK), AUTO_LOCK_OPTIONS)}</div>
+    <div class="note info"><span>قفل فعال است (${l.kind === 'pattern' ? 'الگو' : 'رمز عددی'}).</span>
+      <div class="actions">
+        ${lk.bioAvail ? `<button class="btn ghost" data-action="lock-bio">${l.bio ? 'خاموش کردن اثر انگشت' : 'روشن کردن اثر انگشت'}</button>` : ''}
+        <button class="btn ghost" data-action="lock-open" data-v="change">تغییر رمز</button>
+        <button class="btn ghost" data-action="lock-open" data-v="disable">خاموش کردن قفل</button>
+      </div></div>`;
+}
+
+function disableLock() {
+  delete store.settings.lock;
+  save(); closeModal(); render(); renderLock();
+  toast('قفل برنامه خاموش شد.');
+}
+
+async function lockPatternStep(seq: string) {
+  if (modal?.kind !== 'lock') return;
+  const f = modal.f;
+  const cur = store.settings.lock;
+  if (f.stage === 'cur') {
+    if (!cur || !(await verifySecret(seq, cur))) return setErr('الگوی فعلی درست نیست.');
+    f.curOk = true;
+    f.error = '';
+    if (f.mode === 'disable') return disableLock();
+    f.stage = 'new';
+    renderModal();
+    return;
+  }
+  if (f.stage === 'new') {
+    f.first = seq; f.stage = 'confirm'; f.error = '';
+    renderModal();
+    return;
+  }
+  if (seq !== f.first) {
+    f.first = ''; f.stage = 'new'; f.error = 'دو الگو یکی نبود؛ دوباره از اول بکشید.';
+    renderModal();
+    return;
+  }
+  f.pin = seq; f.pin2 = seq;
+  await lockSave();
+}
+
+async function lockSave() {
+  if (modal?.kind !== 'lock') return;
+  const f = modal.f;
+  const cur = store.settings.lock;
+  f.busy = true;
+  try {
+    if (f.mode !== 'enable' && !f.curOk && !(cur && (await verifySecret(f.cur, cur)))) return setErr('رمز فعلی درست نیست.');
+    if (f.mode === 'disable') return disableLock();
+    if (!isValidSecret(f.pin, f.kind)) return setErr(`رمز باید ${toFa(String(PIN_MIN))} تا ${toFa(String(PIN_MAX))} رقم (فقط عدد) باشد.`);
+    if (normalizePin(f.pin) !== normalizePin(f.pin2)) return setErr('رمز و تکرار آن یکی نیست.');
+    const rec = await hashSecret(f.pin, f.kind);
+    store.settings.lock = { ...rec, bio: cur?.bio, after: cur?.after ?? DEFAULT_AUTO_LOCK };
+    writeFail({ fails: 0, until: 0 });
+    save(); closeModal(); render();
+    toast(f.mode === 'enable' ? 'قفل برنامه فعال شد.' : f.kind === 'pattern' ? 'الگو تغییر کرد.' : 'رمز تغییر کرد.');
+  } finally {
+    f.busy = false;
+  }
 }
 
 function viewSettings(): string {
@@ -1201,7 +1457,7 @@ function viewSettings(): string {
     <div class="field"><span class="lab">واحد پول نمایش</span>${seg('set-unit', s.unit, [['toman', 'تومان'], ['rial', 'ریال']])}
       <span class="hint">همه‌ی مبالغ به‌صورت ریال ذخیره می‌شوند و فقط نمایش عوض می‌شود.</span></div>
     <div class="field"><span class="lab">ظاهر برنامه</span>${seg('set-theme', s.theme, [['system', 'خودکار'], ['light', 'روشن'], ['dark', 'تاریک']])}</div>
-    <div class="field"><span class="lab">اندازه‌ی نوشته‌ها</span>${seg('set-font', s.font, [['normal', 'معمولی'], ['large', 'بزرگ']])}</div>
+    <div class="field"><span class="lab">اندازه‌ی نوشته‌ها</span>${seg('set-font', s.font, [['small', 'کوچک'], ['normal', 'معمولی'], ['large', 'بزرگ']])}</div>
     <h2 class="section-title">قیمت خودکار</h2>
     <div class="note info"><span>منبع: TGJU (طلا ۱۸ عیار، دلار، تتر). قیمت قدیمی، صفر یا جهش مشکوک رد می‌شود و آخرین قیمت معتبر می‌ماند.</span>
       <button class="btn link" data-action="paste-open">چسباندن پاسخ TGJU (برای امتحان)</button></div>
@@ -1215,6 +1471,7 @@ function viewSettings(): string {
         <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
       </div>
     </div>
+    ${lockSection()}
     <h2 class="section-title">پشتیبان‌گیری</h2>
     <div class="note info"><span>${backupInfoHtml()}</span>
       <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
@@ -1229,7 +1486,7 @@ function viewSettings(): string {
       <button class="btn ghost" data-action="ask" data-v="reset">بازگشت به داده‌ی آزمایشی</button>
       <button class="btn ghost" data-action="ask" data-v="clear">پاک کردن همه‌ی داده‌ها</button>
     </div>
-    <div class="note info"><span>داده‌ها فقط روی همین دستگاه نگه‌داری می‌شوند؛ برای محافظت از آن‌ها پشتیبان بگیرید. قفل رمز برنامه هنوز ساخته نشده است.</span></div>`;
+    <div class="note info"><span>داده‌ها فقط روی همین دستگاه نگه‌داری می‌شوند؛ برای محافظت از آن‌ها پشتیبان بگیرید. </span></div>`;
 }
 
 /* ============================== رندر اصلی ============================== */
@@ -1265,6 +1522,7 @@ function render() {
   else if (view.tab === 'people') body = viewPeople();
   else body = viewSettings();
   appEl.innerHTML = `<div class="shell">${body}</div>${navHtml()}`;
+  renderLock();
 }
 
 let toastTimer: number | undefined;
@@ -1333,6 +1591,7 @@ type Modal =
   | { kind: 'paste'; f: { text: string; error: string } }
   | { kind: 'prices'; results: PriceResult[]; errors: { provider: string; message: string }[] }
   | { kind: 'ask'; what: 'reset' | 'clear' }
+  | { kind: 'lock'; f: { mode: 'enable' | 'change' | 'disable'; kind: LockKind; stage: 'cur' | 'new' | 'confirm'; first: string; curOk: boolean; cur: string; pin: string; pin2: string; error: string; busy: boolean } }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -1636,6 +1895,35 @@ function renderModal() {
       <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
       <div class="actions"><button class="btn" data-action="paste-apply">اعمال قیمت‌ها</button>
         <button class="btn ghost" data-action="close">انصراف</button></div>`);
+  } else if (modal.kind === 'lock') {
+    const f = modal.f;
+    const m = f.mode;
+    const existing = store.settings.lock;
+    const title = m === 'enable' ? 'فعال کردن قفل' : m === 'change' ? 'تغییر قفل' : 'خاموش کردن قفل';
+    const field = (id: string, key: string, label: string, val: string) =>
+      `<div class="field"><label for="${id}">${label}</label><input id="${id}" data-field="${key}" type="password" inputmode="numeric" maxlength="${PIN_MAX}" autocomplete="off" value="${esc(val)}"></div>`;
+    const cancel = '<button class="btn ghost" data-action="close">انصراف</button>';
+    const err = `<div class="err" id="ferr" role="alert">${esc(f.error)}</div>`;
+    let inner: string;
+    if (f.stage === 'cur' && existing?.kind === 'pattern') {
+      inner = `<h2>${title}</h2><div class="hint">الگوی فعلی را بکشید.</div><div class="pad-wrap">${patternPadHtml('lc')}</div>${err}<div class="actions">${cancel}</div>`;
+    } else if (f.stage === 'new' || f.stage === 'confirm') {
+      const kindSeg = m === 'disable' ? '' : `<div class="field"><span class="lab">نوع قفل</span>${seg('lock-kind', f.kind, [['pin', 'رمز عددی'], ['pattern', 'الگو']])}</div>`;
+      if (m === 'disable') {
+        inner = `<h2>${title}</h2>${field('lc-cur', 'cur', 'رمز فعلی', f.cur)}${err}<div class="actions"><button class="btn" data-action="lock-save"${f.busy ? ' disabled' : ''}>خاموش کردن</button>${cancel}</div>`;
+      } else if (f.kind === 'pattern') {
+        inner = `<h2>${title}</h2>${kindSeg}<div class="hint">${f.stage === 'new' ? `الگوی جدید را بکشید (دست‌کم ${toFa(String(PATTERN_MIN))} نقطه).` : 'همان الگو را دوباره بکشید.'}</div><div class="pad-wrap">${patternPadHtml('lc')}</div>${err}<div class="actions">${cancel}</div>`;
+      } else {
+        inner = `<h2>${title}</h2>${kindSeg}
+          ${m === 'change' && existing?.kind !== 'pattern' ? field('lc-cur', 'cur', 'رمز فعلی', f.cur) : ''}
+          ${field('lc-pin', 'pin', `رمز جدید (${toFa(String(PIN_MIN))} تا ${toFa(String(PIN_MAX))} رقم)`, f.pin)}${field('lc-pin2', 'pin2', 'تکرار رمز جدید', f.pin2)}
+          ${m === 'enable' ? '<div class="note info"><span>رمز یا الگو را فراموش نکنید. اگر فراموش شود، فقط با پاک کردن اطلاعات برنامه می‌توان قفل را برداشت و باید از پشتیبان بازیابی کنید.</span></div>' : ''}
+          ${err}<div class="actions"><button class="btn" data-action="lock-save"${f.busy ? ' disabled' : ''}>ذخیره</button>${cancel}</div>`;
+      }
+    } else {
+      inner = `<h2>${title}</h2>${err}<div class="actions">${cancel}</div>`;
+    }
+    modalEl.innerHTML = sheet(inner);
   } else if (modal.kind === 'backup') {
     modalEl.innerHTML = sheet(`<h2>ساخت فایل پشتیبان</h2>
       <div class="note info"><span>برای پشتیبان یک رمز بگذارید. بعد از ساخت، منوی اشتراک‌گذاری اندروید باز می‌شود و می‌توانید فایل را برای جیمیل خودتان بفرستید. رمز را به همراه فایل نفرستید و جای امنی یادداشت کنید.</span></div>
@@ -1714,6 +2002,68 @@ document.addEventListener('click', (ev) => {
       if (['1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
       render();
       break;
+    case 'lock-open': {
+      const mode = v as 'enable' | 'change' | 'disable';
+      const needCurPad = mode !== 'enable' && store.settings.lock?.kind === 'pattern';
+      modal = { kind: 'lock', f: { mode, kind: 'pin', stage: needCurPad ? 'cur' : 'new', first: '', curOk: false, cur: '', pin: '', pin2: '', error: '', busy: false } };
+      renderModal();
+      break;
+    }
+    case 'lock-kind':
+      if (modal?.kind === 'lock' && (v === 'pin' || v === 'pattern')) {
+        Object.assign(modal.f, { kind: v, stage: 'new', first: '', pin: '', pin2: '', error: '' });
+        renderModal();
+      }
+      break;
+    case 'lock-save':
+      void lockSave();
+      break;
+    case 'set-autolock':
+      if (store.settings.lock && AUTO_LOCK_OPTIONS.some(([k]) => k === v)) {
+        store.settings.lock.after = Number(v);
+        save();
+        render();
+      }
+      break;
+    case 'lock-bio':
+      if (store.settings.lock?.bio) {
+        store.settings.lock.bio = false;
+        save();
+        render();
+      } else {
+        toNative({ type: 'bio-auth', purpose: 'enable' });
+      }
+      break;
+    case 'lk-digit':
+      lkDigit(v);
+      break;
+    case 'lk-del':
+      lk.entry = lk.entry.slice(0, -1);
+      lk.msg = '';
+      renderLock();
+      break;
+    case 'lk-bio':
+      toNative({ type: 'bio-auth', purpose: 'unlock' });
+      break;
+    case 'lk-forgot':
+      lk.forgot = true;
+      renderLock();
+      break;
+    case 'lk-forgot-no':
+      lk.forgot = false;
+      renderLock();
+      break;
+    case 'lk-forgot-yes': {
+      const st = { ...store.settings };
+      delete st.lock;
+      store = emptyStore(st, mk());
+      try { localStorage.removeItem('hooman-finance-before-restore'); } catch { /* ignore */ }
+      lk.forgot = false;
+      save();
+      unlockNow();
+      toast('اطلاعات پاک و قفل برداشته شد. می‌توانید از پشتیبان بازیابی کنید.');
+      break;
+    }
     case 'backup-open':
       modal = { kind: 'backup', f: { pass: '', pass2: '', error: '', busy: false } };
       renderModal();
@@ -2200,6 +2550,23 @@ function checkUpdate() {
   if (view.tab === 'settings') render();
 }
 Object.assign(window, {
+  __bioAvail: (r: { ok: boolean }) => {
+    lk.bioAvail = !!r.ok;
+    if (lk.locked && store.settings.lock?.bio && lk.bioAvail) toNative({ type: 'bio-auth', purpose: 'unlock' });
+    if (view.tab === 'settings') render();
+  },
+  __bioReply: (r: { ok: boolean; purpose?: string }) => {
+    if (!r.ok) return;
+    if (r.purpose === 'enable' && store.settings.lock) {
+      store.settings.lock.bio = true;
+      save();
+      render();
+      toast('اثر انگشت روشن شد.');
+    } else if (r.purpose === 'unlock' && lk.locked) {
+      unlockNow();
+    }
+  },
+  __appState: (st: string) => appVisibility(st === 'active' ? 'active' : 'background'),
   __shareReply: (r: { ok: boolean; error?: string }) => {
     if (!r.ok) toast('ارسال فایل ممکن نشد: ' + (r.error ?? 'خطای نامشخص'));
   },
@@ -2211,6 +2578,7 @@ Object.assign(window, {
     } else if (r.latest > r.current && r.url) {
       Object.assign(upd, { status: 'available', latest: r.latest, url: r.url, size: r.size, notes: r.notes });
     } else upd.status = 'none';
+    if (r.ok) upd.latest = r.latest;
     try { localStorage.setItem('hooman-finance-lastcheck', String(Date.now())); } catch { /* ignore */ }
     if (!modal) render();
   },
@@ -2344,6 +2712,15 @@ recordHistory();
 if (!store.sample) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
 render();
 autoCheckUpdate();
+
+document.addEventListener('keydown', (ev) => {
+  if (!lk.locked || lk.forgot) return;
+  if (/^[0-9۰-۹]$/.test(ev.key)) lkDigit(normalizePin(ev.key));
+  else if (ev.key === 'Backspace') { lk.entry = lk.entry.slice(0, -1); renderLock(); }
+});
+document.addEventListener('visibilitychange', () => appVisibility(document.visibilityState === 'visible' ? 'active' : 'background'));
+renderLock();
+toNative({ type: 'bio-check' });
 
 /** قیمت‌ها هنگام باز شدن اپ و بازگشت به آن خودکار به‌روز می‌شوند (حداکثر هر ۵ دقیقه) */
 let lastAutoRefresh = 0;
