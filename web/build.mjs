@@ -43,3 +43,17 @@ fs.writeFileSync(
     ';\nexport default html;\n',
 );
 console.log('src/native/appHtml.ts written');
+
+// نسخه‌ی وب نصب‌شونده (PWA) برای انتشار روی GitHub Pages
+const head =
+  '<link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon-192.png">' +
+  '<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">' +
+  '<meta name="apple-mobile-web-app-title" content="Dara"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">' +
+  '<meta name="theme-color" content="#0B1F3A"><title>Dara | دارا</title>';
+const reg = "<script>if('serviceWorker' in navigator)addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})</script>";
+fs.mkdirSync('web/dist/pages', { recursive: true });
+fs.writeFileSync(
+  'web/dist/pages/index.html',
+  nativeHtml.replace('</head>', head + '</head>').replace('</body>', reg + '</body>'),
+);
+console.log('web/dist/pages/index.html');
