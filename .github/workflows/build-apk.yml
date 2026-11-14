@@ -88,5 +88,5 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/*.apk hooman-finance.apk
           gh release create "apk-${{ github.run_number }}" hooman-finance.apk \
-            --title "DARAM APK #${{ github.run_number }}" \
-            --notes "نسخه اندروید DARAM، ساخته‌شده از آخرین commit شاخه main."
+            --title "دارا APK #${{ github.run_number }}" \
+            --notes "نسخه اندروید دارا، ساخته‌شده از آخرین commit شاخه main."

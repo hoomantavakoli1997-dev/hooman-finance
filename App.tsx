@@ -349,7 +349,7 @@ export default function App() {
             </View>
           </Animated.View>
           <Animated.View style={{ opacity: introOpacity, alignItems: 'center', marginTop: 25 }}>
-            <Text style={{ color: '#f5f8fb', fontSize: 27, fontWeight: '800', letterSpacing: 5 }}>DARAM</Text>
+            <Text style={{ color: '#f5f8fb', fontSize: 27, fontWeight: '800' }}>دارا</Text>
             <Text style={{ color: '#8edbd7', fontSize: 14, marginTop: 5 }}>همه دارایی‌هایت، یک‌جا.</Text>
           </Animated.View>
         </Animated.View>
