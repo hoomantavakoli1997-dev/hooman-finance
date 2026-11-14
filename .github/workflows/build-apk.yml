@@ -21,7 +21,7 @@ jobs:
         run: |
           node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync('app.json'));a.expo.android.versionCode=${{ github.run_number }};a.expo.extra={build:${{ github.run_number }}};fs.writeFileSync('app.json',JSON.stringify(a,null,2))"
       - run: npx expo prebuild --platform android --no-install
-      - name: Apply DARAM launcher icon
+      - name: Apply Dara launcher icon
         run: |
           mkdir -p android/app/src/main/res/drawable
           cat > android/app/src/main/res/drawable/ic_launcher_daram.xml <<'XML'
@@ -55,7 +55,7 @@ jobs:
             </domain-config>
           </network-security-config>
           XML
-      - name: Configure DARAM Android manifest
+      - name: Configure Dara Android manifest
         run: |
           python3 - <<'PY'
           import xml.etree.ElementTree as ET
@@ -88,5 +88,5 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/*.apk hooman-finance.apk
           gh release create "apk-${{ github.run_number }}" hooman-finance.apk \
-            --title "دارا APK #${{ github.run_number }}" \
+            --title "Dara APK #${{ github.run_number }}" \
             --notes "نسخه اندروید دارا، ساخته‌شده از آخرین commit شاخه main."

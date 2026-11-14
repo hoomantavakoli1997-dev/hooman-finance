@@ -349,7 +349,8 @@ export default function App() {
             </View>
           </Animated.View>
           <Animated.View style={{ opacity: introOpacity, alignItems: 'center', marginTop: 25 }}>
-            <Text style={{ color: '#f5f8fb', fontSize: 27, fontWeight: '800' }}>دارا</Text>
+            <Text style={{ color: '#f5f8fb', fontSize: 30, fontWeight: '800' }}>دارا</Text>
+            <Text style={{ color: '#e2bd68', fontSize: 13, fontWeight: '800', letterSpacing: 5, marginTop: 2 }}>DARA</Text>
             <Text style={{ color: '#8edbd7', fontSize: 14, marginTop: 5 }}>همه دارایی‌هایت، یک‌جا.</Text>
           </Animated.View>
         </Animated.View>
