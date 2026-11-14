@@ -5,6 +5,7 @@ import Constants from 'expo-constants';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Notifications from 'expo-notifications';
 import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
 
@@ -22,6 +23,19 @@ const UPDATE_REPO = 'hoomantavakoli1997-dev/hooman-finance';
 const BUILD = Number((Constants.expoConfig?.extra as { build?: number } | undefined)?.build ?? 0);
 
 const TSETMC_HOST = 'https://cdn.tsetmc.com/';
+const NOTE_CHANNEL = 'reminders';
+// اعلان حتی وقتی برنامه باز است نمایش داده شود
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
+});
+async function ensureChannel() {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(NOTE_CHANNEL, {
+    name: 'یادآورها',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 150, 250],
+  });
+}
 interface WvJob { id: string; url: string }
 
 export default function App() {
@@ -153,7 +167,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; notes?: { id: string; title: string; body: string; at: number }[] };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -161,6 +175,57 @@ export default function App() {
       }
       if (msg.type === 'exit') {
         BackHandler.exitApp();
+        return;
+      }
+      if (msg.type === 'notify-perm') {
+        void (async () => {
+          try {
+            await ensureChannel();
+            let st = await Notifications.getPermissionsAsync();
+            if (!st.granted && msg.ask && st.canAskAgain) st = await Notifications.requestPermissionsAsync();
+            call('__notifyPerm', { ok: st.granted, canAsk: st.canAskAgain });
+          } catch {
+            call('__notifyPerm', { ok: false, canAsk: false });
+          }
+        })();
+        return;
+      }
+      if (msg.type === 'notify-sync' && Array.isArray(msg.notes)) {
+        // فهرست اعلان‌های آینده را کامل جایگزین می‌کنیم تا چیز تکراری یا قدیمی نماند
+        const notes = msg.notes;
+        void (async () => {
+          try {
+            const st = await Notifications.getPermissionsAsync();
+            await Notifications.cancelAllScheduledNotificationsAsync();
+            if (!st.granted) return;
+            await ensureChannel();
+            for (const n of notes.slice(0, 48)) {
+              await Notifications.scheduleNotificationAsync({
+                identifier: n.id,
+                content: { title: String(n.title).slice(0, 80), body: String(n.body).slice(0, 160) },
+                trigger: { date: new Date(n.at), channelId: NOTE_CHANNEL } as never,
+              });
+            }
+          } catch {
+            /* اعلان زمان‌بندی نشد؛ یادآورها داخل برنامه همچنان دیده می‌شوند */
+          }
+        })();
+        return;
+      }
+      if (msg.type === 'notify-now' && msg.title) {
+        void (async () => {
+          try {
+            const st = await Notifications.getPermissionsAsync();
+            if (!st.granted) return;
+            await ensureChannel();
+            await Notifications.scheduleNotificationAsync({
+              content: { title: String(msg.title).slice(0, 80), body: String(msg.body ?? '').slice(0, 160) },
+              trigger: { channelId: NOTE_CHANNEL } as never,
+            });
+          } catch {
+            /* ignore */
+          }
+        })();
         return;
       }
       if (msg.type === 'bio-check') {
@@ -178,7 +243,7 @@ export default function App() {
         const purpose = msg.purpose;
         void (async () => {
           try {
-            const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'باز کردن دارام', cancelLabel: 'استفاده از رمز', disableDeviceFallback: true });
+            const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'باز کردن دارا', cancelLabel: 'استفاده از رمز', disableDeviceFallback: true });
             call('__bioReply', { ok: r.success, purpose });
           } catch {
             call('__bioReply', { ok: false, purpose });

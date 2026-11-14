@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "DARAM",
+    "name": "دارا",
     "slug": "daram-finance",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -10,11 +10,19 @@
       "versionCode": 1,
       "permissions": [
         "INTERNET",
-        "REQUEST_INSTALL_PACKAGES"
+        "REQUEST_INSTALL_PACKAGES",
+        "POST_NOTIFICATIONS"
       ],
       "backgroundColor": "#0b1f3a"
     },
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#18b6b0"
+        }
+      ]
+    ],
     "backgroundColor": "#0b1f3a",
     "splash": {
       "backgroundColor": "#0b1f3a",

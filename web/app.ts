@@ -15,6 +15,10 @@ import {
 import sampleRaw from './market-sample.json';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
+  DEFAULT_REMINDER_SETTINGS, LEAD_OPTIONS, PriceReminder, Reminder, ReminderEvent, ReminderSettings, activeEvents, addDaysIso,
+  dateEvents, daysBetween, installmentEvents, priceHit, scheduleNotes, validateReminder,
+} from '../src/core/reminders';
+import {
   Debt, DebtPayment, DebtState, Direction, PeopleData, Person, addJalaliMonths, cashEffect, computeDebt,
   computePeople, netWorth, validatePeople,
 } from '../src/core/people';
@@ -31,6 +35,8 @@ interface Settings {
   lastBackup?: string;
   /** قفل برنامه: هش رمز، اثر انگشت و مدت قفل خودکار (ثانیه) */
   lock?: PinRecord & { bio?: boolean; after?: number };
+  /** تنظیم یادآورها (اقساط، ساعت اعلان) */
+  rem?: Partial<ReminderSettings>;
   unit: 'toman' | 'rial';
   theme: 'system' | 'light' | 'dark';
   font: 'small' | 'normal' | 'large';
@@ -51,6 +57,8 @@ interface Store {
   debts: Debt[];
   payments: DebtPayment[];
   settings: Settings;
+  /** یادآورهای دلخواه: تاریخ و هشدار قیمت */
+  reminders?: Reminder[];
   /** تاریخچه‌ی ارزش کل سرمایه؛ فقط از زمان نصب نسخه‌ی دارای این قابلیت ثبت می‌شود. */
   history?: HistoryPoint[];
 }
@@ -122,6 +130,7 @@ function load(): Store {
         if (!Array.isArray(s.debts)) s.debts = [];
         if (!Array.isArray(s.payments)) s.payments = [];
         if (!Array.isArray(s.history)) s.history = [];
+        if (!Array.isArray(s.reminders)) s.reminders = [];
         return s;
       }
     }
@@ -140,6 +149,7 @@ function save() {
   } catch {
     /* بدون ذخیره‌سازی هم برنامه کار می‌کند ولی داده پس از بستن می‌ماند */
   }
+  scheduleNoteSync();
 }
 
 /* ============================ قالب‌بندی ============================ */
@@ -281,7 +291,9 @@ function lastPriceLabel(): string {
 }
 
 function header(title: string, sub = ''): string {
-  return `<header class="top"><h1>${title}</h1><span class="date"><span>${sub || 'امروز ' + dateFa(todayIso())}</span><small class="pt" data-testid="price-time">${lastPriceLabel()}</small></span></header>`;
+  const n = remBadge();
+  const bell = `<button class="bell" data-action="rem-open" aria-label="یادآورها${n ? ' (' + toFa(String(n)) + ' مورد)' : ''}">${BELL}${n ? `<b class="bd">${toFa(String(n))}</b>` : ''}</button>`;
+  return `<header class="top"><div class="ttl"><h1>${title}</h1>${bell}</div><span class="date"><span>${sub || 'امروز ' + dateFa(todayIso())}</span><small class="pt" data-testid="price-time">${lastPriceLabel()}</small></span></header>`;
 }
 
 function sampleNote(): string {
@@ -443,8 +455,9 @@ function viewHome(pf: Portfolio): string {
   const worth = netWorth(pf.cash, assetsValue, ppl);
   const missing = pf.missingPrice.map((id) => esc(assetName(id)));
 
-  return `${header('DARAM', 'مدیریت دارایی‌های شخصی')}
+  return `${header('دارا', 'مدیریت دارایی‌های شخصی')}
     ${sampleNote()}
+    ${remCard()}
     <section class="hero compact" aria-label="خلاصه‌ی دارایی">
       <div class="between"><span class="label">سرمایه‌ی خالص</span>
         <button class="eye" data-action="toggle-hide" aria-pressed="${hidden()}" aria-label="${hidden() ? 'نمایش مبلغ‌ها' : 'پنهان کردن مبلغ‌ها'}">${hidden() ? EYE_OFF : EYE_ON}</button></div>
@@ -1137,7 +1150,7 @@ function normalizeStore(raw: unknown): Store | null {
   if (!s || s.v !== 1 || !Array.isArray(s.assets) || !Array.isArray(s.txs) || !s.settings || typeof s.settings !== 'object') return null;
   if (!s.prices || typeof s.prices !== 'object') s.prices = {};
   if (!s.market || !Array.isArray(s.market.entries)) s.market = bundledMarket();
-  for (const k of ['people', 'debts', 'payments', 'history'] as const) if (!Array.isArray(s[k])) (s as unknown as Record<string, unknown[]>)[k] = [];
+  for (const k of ['people', 'debts', 'payments', 'history', 'reminders'] as const) if (!Array.isArray(s[k])) (s as unknown as Record<string, unknown[]>)[k] = [];
   s.sample = false;
   return s;
 }
@@ -1581,6 +1594,204 @@ const ASSET_PRESETS: Record<string, { label: string; unit: string; decimals: str
 
 /** اگر فرم دارایی از داخل فرم معامله باز شده باشد، پس از ذخیره/انصراف به همان فرم برمی‌گردیم */
 let pendingTx: TxForm | null = null;
+/* ============================== یادآورها ============================== */
+
+const BELL = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>';
+
+const remSettings = (): ReminderSettings => ({ ...DEFAULT_REMINDER_SETTINGS, ...(store.settings.rem ?? {}) });
+const remList = (): Reminder[] => store.reminders ?? (store.reminders = []);
+const personNameOf = (id: string) => store.people.find((p) => p.id === id)?.name ?? '';
+
+/** همه‌ی رویدادهای تاریخی (قسط‌ها و یادآورهای تاریخ) به ترتیب سررسید */
+function remEvents(horizon = 60): ReminderEvent[] {
+  const today = todayIso();
+  return [
+    ...installmentEvents(store.debts, store.payments, personNameOf, remSettings(), today, horizon),
+    ...dateEvents(remList(), today),
+  ].sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0));
+}
+const firedUnseen = (): PriceReminder[] => remList().filter((r): r is PriceReminder => r.kind === 'price' && !!r.firedAt && !r.seen);
+const remBadge = (): number => activeEvents(remEvents(), todayIso()).length + firedUnseen().length;
+
+function dueBadge(due: string): string {
+  const n = daysBetween(todayIso(), due);
+  if (n < 0) return `<span class="badge loss">${toFa(String(-n))} روز گذشته</span>`;
+  if (n === 0) return '<span class="badge buy">امروز</span>';
+  if (n === 1) return '<span class="badge buy">فردا</span>';
+  return `<span class="badge">${toFa(String(n))} روز دیگر</span>`;
+}
+
+function priceNote(r: PriceReminder): string {
+  const t = `${ltr(fmtNum(fromRial(Decimal.of(r.target))))} ${unitLabel()}`;
+  return `${r.side === 'sell' ? 'فروش' : 'خرید'} · وقتی قیمت به ${t} ${r.cond === 'above' ? 'یا بالاتر' : 'یا پایین‌تر'} رسید`;
+}
+
+/** همه‌ی قیمت‌های هدف را با آخرین قیمت‌ها می‌سنجد و هرکدام فقط یک بار اعلان می‌دهد */
+function checkPriceAlerts() {
+  let n = 0;
+  for (const r of remList()) {
+    if (r.kind !== 'price' || r.firedAt) continue;
+    const p = store.prices[r.assetId];
+    const price = p ? parseDec(p.price) : null;
+    if (!p || !price) continue;
+    // قیمت خودکارِ قدیمی نباید هشدار بدهد
+    if (p.source === 'auto' && Date.now() - Date.parse(p.at) > 3 * 86_400_000) continue;
+    if (!priceHit(r, price)) continue;
+    r.firedAt = new Date().toISOString();
+    r.seen = false;
+    n += 1;
+    toNative({
+      type: 'notify-now',
+      title: `${r.side === 'sell' ? 'وقت فروش' : 'وقت خرید'}: ${assetName(r.assetId)}`,
+      body: `قیمت به ${fmtNum(fromRial(price))} ${unitLabel()} رسید. هدف شما: ${fmtNum(fromRial(Decimal.of(r.target)))}`,
+    });
+  }
+  if (n) {
+    save();
+    if (!modal) render();
+    toast(`${toFa(String(n))} هشدار قیمت فعال شد. زنگوله را بزنید.`);
+  }
+}
+
+let noteTimer = 0;
+function scheduleNoteSync() {
+  if (!inApp()) return;
+  window.clearTimeout(noteTimer);
+  noteTimer = window.setTimeout(() => toNative({ type: 'notify-sync', notes: scheduleNotes(remEvents(), remSettings().hour) }), 600);
+}
+
+let remPerm: 'unknown' | 'granted' | 'denied' = 'unknown';
+
+function remCard(): string {
+  const act = activeEvents(remEvents(), todayIso());
+  const fired = firedUnseen();
+  if (!act.length && !fired.length) return '';
+  const rows = [
+    ...fired.map((r) => `<div class="row"><div class="main"><span class="t">${r.side === 'sell' ? 'وقت فروش' : 'وقت خرید'}: ${esc(assetName(r.assetId))}</span><span class="s">${priceNote(r)}</span></div><span class="badge buy">رسید</span></div>`),
+    ...act.slice(0, 3).map((e) => `<div class="row"><div class="main"><span class="t">${esc(e.title)}</span><span class="s">${dateFa(e.dueDate)}${e.amount ? ' · ' + money(Decimal.of(e.amount)) : ''}</span></div>${dueBadge(e.dueDate)}</div>`),
+  ];
+  return `<section class="remcard" aria-label="یادآورها"><div class="between"><h2 class="section-title">یادآورها</h2><button class="btn link" data-action="rem-open">همه‌ی یادآورها</button></div><div class="list">${rows.join('')}</div></section>`;
+}
+
+interface RemForm {
+  view: 'list' | 'date' | 'price';
+  title: string; note: string; y: string; m: string; d: string; lead: string;
+  assetId: string; side: 'buy' | 'sell'; cond: 'above' | 'below'; target: string;
+  error: string;
+}
+function newRemForm(view: RemForm['view']): RemForm {
+  const j = jf(addDaysIso(todayIso(), 7));
+  const a = store.assets.find((x) => x.id !== CASH_ID);
+  return { view, title: '', note: '', ...j, lead: '1', assetId: a?.id ?? '', side: 'sell', cond: 'above', target: '', error: '' };
+}
+
+function remModalHtml(f: RemForm): string {
+  const s = remSettings();
+  if (f.view === 'date') {
+    return sheet(`<h2>یادآور تاریخ</h2>
+      <div class="field"><label for="r-title">برای چه چیزی؟</label>
+        <input id="r-title" data-field="title" value="${esc(f.title)}" autocomplete="off" placeholder="مثلاً سررسید چک، اجاره، قسط خودرو"></div>
+      <div class="field"><span class="lab">تاریخ (شمسی)</span>${dateFields(f.y, f.m, f.d, ['r-y', 'r-m', 'r-d'], ['y', 'm', 'd'])}</div>
+      <div class="field"><span class="lab">چند روز زودتر یادآوری شود؟</span>${seg('rem-flead', f.lead, LEAD_OPTIONS.map((n) => [String(n), n ? toFa(String(n)) + ' روز' : 'همان روز'] as [string, string]))}</div>
+      <div class="field"><label for="r-note">توضیح (اختیاری)</label><input id="r-note" data-field="note" value="${esc(f.note)}" autocomplete="off"></div>
+      <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
+      <div class="actions"><button class="btn" data-action="rem-save-date">ذخیره</button><button class="btn ghost" data-action="rem-back">بازگشت</button></div>`);
+  }
+  if (f.view === 'price') {
+    const opts = store.assets.filter((a) => a.id !== CASH_ID).map((a) => `<option value="${esc(a.id)}" ${a.id === f.assetId ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+    const cur = store.prices[f.assetId];
+    return sheet(`<h2>هشدار قیمت</h2>
+      <div class="field"><label for="r-asset">دارایی یا سهم</label><select id="r-asset" data-field="assetId">${opts}</select>
+        <span class="hint">${cur ? `قیمت فعلی ثبت‌شده: ${money(Decimal.of(cur.price))}` : 'برای این مورد هنوز قیمتی ثبت نشده است.'} سهم تازه را اول از تب دارایی‌ها اضافه و به بورس وصل کنید.</span></div>
+      <div class="field"><span class="lab">هدف</span>${seg('rem-side', f.side, [['sell', 'فروش'], ['buy', 'خرید']])}</div>
+      <div class="field"><span class="lab">وقتی قیمت…</span>${seg('rem-cond', f.cond, [['above', 'بالاتر رفت'], ['below', 'پایین‌تر آمد']])}</div>
+      <div class="field"><label for="r-target">قیمت هدف هر واحد (${unitLabel()})</label>
+        <input id="r-target" data-field="target" inputmode="decimal" value="${esc(f.target)}" autocomplete="off"></div>
+      <div class="note info"><span>قیمت‌ها وقتی بررسی می‌شوند که برنامه باز باشد یا قیمت‌ها به‌روز شوند. برنامه در پس‌زمینه قیمت نمی‌گیرد.</span></div>
+      <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
+      <div class="actions"><button class="btn" data-action="rem-save-price">ذخیره</button><button class="btn ghost" data-action="rem-back">بازگشت</button></div>`);
+  }
+  const ev = remEvents();
+  const evRows = ev.map((e) => {
+    const isInst = e.kind === 'installment';
+    const act = isInst
+      ? `<button class="btn link" data-action="rem-pay" data-v="${esc(e.id.split(':')[1])}">ثبت پرداخت</button>`
+      : `<button class="btn link" data-action="rem-done" data-v="${esc(e.id.slice(5))}">انجام شد</button><button class="btn link bad" data-action="rem-del" data-v="${esc(e.id.slice(5))}">حذف</button>`;
+    return `<div class="row"><div class="main"><span class="t">${esc(e.title)}</span>
+      <span class="s">${dateFa(e.dueDate)}${e.amount ? ' · ' + money(Decimal.of(e.amount)) : ''}${e.body && !isInst ? ' · ' + esc(e.body) : ''}</span>
+      <span class="s">${act}</span></div>${dueBadge(e.dueDate)}</div>`;
+  }).join('');
+  const prices = remList().filter((r): r is PriceReminder => r.kind === 'price').map((r) => {
+    const p = store.prices[r.assetId];
+    return `<div class="row"><div class="main"><span class="t">${esc(assetName(r.assetId))}</span>
+      <span class="s">${priceNote(r)}</span>
+      <span class="s">${p ? 'قیمت فعلی: ' + money(Decimal.of(p.price)) : 'قیمت فعلی ثبت نشده'}</span>
+      <span class="s">${r.firedAt ? `<button class="btn link" data-action="rem-rearm" data-v="${esc(r.id)}">دوباره فعال کن</button>` : ''}<button class="btn link bad" data-action="rem-del" data-v="${esc(r.id)}">حذف</button></span></div>
+      <span class="badge ${r.firedAt ? 'buy' : ''}">${r.firedAt ? 'رسید' : 'در انتظار'}</span></div>`;
+  }).join('');
+  const perm = !inApp()
+    ? '<div class="note info"><span>اعلان گوشی فقط در برنامه‌ی اندروید کار می‌کند. در این نسخه‌ی وب، یادآورها فقط داخل صفحه دیده می‌شوند.</span></div>'
+    : remPerm === 'granted' ? ''
+    : '<div class="note"><span>اجازه‌ی اعلان داده نشده است، پس یادآورها فقط داخل برنامه دیده می‌شوند. اگر دکمه کار نکرد، از تنظیمات اندروید برای این برنامه «اعلان‌ها» را روشن کنید.</span><button class="btn" data-action="rem-perm">اجازه‌ی اعلان</button></div>';
+  return sheet(`<h2>یادآورها</h2>${perm}
+    <div class="actions"><button class="btn" data-action="rem-new-date">یادآور تاریخ</button><button class="btn" data-action="rem-new-price">هشدار قیمت</button></div>
+    <h2 class="section-title">قسط‌ها و تاریخ‌ها</h2>
+    <div class="list">${evRows || '<div class="empty">در ۶۰ روز آینده چیزی نیست.</div>'}</div>
+    <h2 class="section-title">هشدار قیمت خرید و فروش</h2>
+    <div class="list">${prices || '<div class="empty">هشداری نگذاشته‌اید.</div>'}</div>
+    <h2 class="section-title">تنظیم</h2>
+    <div class="field"><span class="lab">یادآوری خودکار قسط‌های ثبت‌شده</span>${seg('rem-inst', s.installments ? '1' : '0', [['1', 'روشن'], ['0', 'خاموش']])}</div>
+    <div class="field"><span class="lab">قسط‌ها چند روز زودتر یادآوری شوند؟</span>${seg('rem-ilead', String(s.installmentLead), LEAD_OPTIONS.map((n) => [String(n), n ? toFa(String(n)) : 'همان روز'] as [string, string]))}</div>
+    <div class="field"><span class="lab">ساعت اعلان</span>${seg('rem-hour', String(s.hour), [8, 9, 12, 18].map((h) => [String(h), toFa(String(h)) + ':۰۰'] as [string, string]))}</div>
+    <div class="actions"><button class="btn ghost" data-action="close">بستن</button></div>`);
+}
+
+function openReminders() {
+  modal = { kind: 'rem', f: newRemForm('list') };
+  // مشاهده‌ی هشدارهای قیمت = دیده‌شده
+  let ch = false;
+  for (const r of remList()) if (r.kind === 'price' && r.firedAt && !r.seen) { r.seen = true; ch = true; }
+  if (ch) { save(); render(); }
+  renderModal();
+  toNative({ type: 'notify-perm' });
+}
+
+function saveDateReminder() {
+  if (modal?.kind !== 'rem') return;
+  const f = modal.f;
+  const date = jalaliToIso(Number(toEn(f.y)), Number(toEn(f.m)), Number(toEn(f.d)));
+  if (!date) return setErr('تاریخ شمسی معتبر نیست.');
+  const r: Reminder = { id: nid('r'), kind: 'date', title: f.title.trim(), date, leadDays: Number(f.lead), ...(f.note.trim() ? { note: f.note.trim() } : {}) };
+  const err = validateReminder(r);
+  if (err) return setErr(err);
+  remList().push(r);
+  save();
+  modal = { kind: 'rem', f: newRemForm('list') };
+  renderModal();
+  render();
+  toNative({ type: 'notify-perm', ask: true });
+  toast('یادآور ذخیره شد.');
+}
+
+function savePriceReminder() {
+  if (modal?.kind !== 'rem') return;
+  const f = modal.f;
+  const n = parseField('قیمت هدف', f.target);
+  if (typeof n === 'string') return setErr(n);
+  const r: PriceReminder = { id: nid('r'), kind: 'price', assetId: f.assetId, side: f.side, cond: f.cond, target: toRialDec(n).toString() };
+  const err = validateReminder(r);
+  if (err) return setErr(err);
+  const cur = store.prices[f.assetId];
+  const curD = cur ? parseDec(cur.price) : null;
+  if (curD && priceHit(r, curD)) return setErr('قیمت فعلی همین حالا به این هدف رسیده است. هدف دیگری بگذارید.');
+  remList().push(r);
+  save();
+  modal = { kind: 'rem', f: newRemForm('list') };
+  renderModal();
+  toNative({ type: 'notify-perm', ask: true });
+  toast('هشدار قیمت ذخیره شد.');
+}
+
 type Modal =
   | { kind: 'tx'; f: TxForm }
   | { kind: 'price'; f: PriceForm }
@@ -1592,6 +1803,7 @@ type Modal =
   | { kind: 'prices'; results: PriceResult[]; errors: { provider: string; message: string }[] }
   | { kind: 'ask'; what: 'reset' | 'clear' }
   | { kind: 'lock'; f: { mode: 'enable' | 'change' | 'disable'; kind: LockKind; stage: 'cur' | 'new' | 'confirm'; first: string; curOk: boolean; cur: string; pin: string; pin2: string; error: string; busy: boolean } }
+  | { kind: 'rem'; f: RemForm }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -1924,6 +2136,8 @@ function renderModal() {
       inner = `<h2>${title}</h2>${err}<div class="actions">${cancel}</div>`;
     }
     modalEl.innerHTML = sheet(inner);
+  } else if (modal.kind === 'rem') {
+    modalEl.innerHTML = remModalHtml(modal.f);
   } else if (modal.kind === 'backup') {
     modalEl.innerHTML = sheet(`<h2>ساخت فایل پشتیبان</h2>
       <div class="note info"><span>برای پشتیبان یک رمز بگذارید. بعد از ساخت، منوی اشتراک‌گذاری اندروید باز می‌شود و می‌توانید فایل را برای جیمیل خودتان بفرستید. رمز را به همراه فایل نفرستید و جای امنی یادداشت کنید.</span></div>
@@ -2182,6 +2396,7 @@ document.addEventListener('click', (ev) => {
       closeModal();
       render();
       toast('قیمت روز ذخیره شد.');
+      checkPriceAlerts();
       break;
     }
     case 'price-clear':
@@ -2351,6 +2566,86 @@ document.addEventListener('click', (ev) => {
     case 'stock-test':
       if (modal?.kind === 'asset') void stockPreview(modal.f);
       break;
+    case 'rem-open':
+      openReminders();
+      break;
+    case 'rem-back':
+      if (modal?.kind === 'rem') { modal.f = newRemForm('list'); renderModal(); }
+      break;
+    case 'rem-new-date':
+      if (modal?.kind === 'rem') { modal.f = newRemForm('date'); renderModal(); }
+      break;
+    case 'rem-new-price':
+      if (modal?.kind === 'rem') {
+        if (!store.assets.some((a) => a.id !== CASH_ID)) { toast('اول یک دارایی یا سهم اضافه کنید.'); break; }
+        modal.f = newRemForm('price');
+        renderModal();
+      }
+      break;
+    case 'rem-flead':
+      if (modal?.kind === 'rem') { modal.f.lead = v; renderModal(); }
+      break;
+    case 'rem-side':
+      if (modal?.kind === 'rem') { modal.f.side = v === 'buy' ? 'buy' : 'sell'; renderModal(); }
+      break;
+    case 'rem-cond':
+      if (modal?.kind === 'rem') { modal.f.cond = v === 'below' ? 'below' : 'above'; renderModal(); }
+      break;
+    case 'rem-save-date':
+      saveDateReminder();
+      break;
+    case 'rem-save-price':
+      savePriceReminder();
+      break;
+    case 'rem-pay':
+      closeModal();
+      openPayForm(v, false);
+      break;
+    case 'rem-done': {
+      const r = remList().find((x) => x.id === v);
+      if (r && r.kind === 'date') { r.done = true; save(); renderModal(); render(); }
+      break;
+    }
+    case 'rem-del':
+      store.reminders = remList().filter((x) => x.id !== v);
+      save();
+      renderModal();
+      render();
+      break;
+    case 'rem-rearm': {
+      const r = remList().find((x) => x.id === v);
+      if (r && r.kind === 'price') {
+        const cur = store.prices[r.assetId];
+        const curD = cur ? parseDec(cur.price) : null;
+        if (curD && priceHit(r, curD)) { toast('قیمت فعلی هنوز به این هدف رسیده است؛ اول هدف را حذف و هدف تازه بگذارید.'); break; }
+        delete r.firedAt;
+        delete r.seen;
+        save();
+        renderModal();
+        render();
+      }
+      break;
+    }
+    case 'rem-inst':
+      store.settings.rem = { ...store.settings.rem, installments: v === '1' };
+      save();
+      renderModal();
+      render();
+      break;
+    case 'rem-ilead':
+      store.settings.rem = { ...store.settings.rem, installmentLead: Number(v) };
+      save();
+      renderModal();
+      render();
+      break;
+    case 'rem-hour':
+      store.settings.rem = { ...store.settings.rem, hour: Number(v) };
+      save();
+      renderModal();
+      break;
+    case 'rem-perm':
+      toNative({ type: 'notify-perm', ask: true });
+      break;
     case 'support-open':
       // داخل اپ، وب‌ویو نباید خودش به صفحه‌ی بیرونی برود؛ باز کردن را به اندروید می‌سپاریم
       if (inApp()) {
@@ -2484,6 +2779,7 @@ function showPriceResults(
   save();
   toastEl.innerHTML = '';
   render();
+  checkPriceAlerts();
   modal = { kind: 'prices', results, errors: errors.map((e) => ({ provider: e.provider, message: friendlyError(e.message) })) };
   renderModal();
 }
@@ -2550,6 +2846,10 @@ function checkUpdate() {
   if (view.tab === 'settings') render();
 }
 Object.assign(window, {
+  __notifyPerm: (r: { ok: boolean }) => {
+    remPerm = r.ok ? 'granted' : 'denied';
+    if (modal?.kind === 'rem' && modal.f.view === 'list') renderModal();
+  },
   __bioAvail: (r: { ok: boolean }) => {
     lk.bioAvail = !!r.ok;
     if (lk.locked && store.settings.lock?.bio && lk.bioAvail) toNative({ type: 'bio-auth', purpose: 'unlock' });
@@ -2620,6 +2920,7 @@ async function runRefresh(silent = false) {
       store.prices = out.prices;
       save();
       if (!modal) render();
+      checkPriceAlerts();
       const any = out.results.some((r) => r.status === 'updated' || r.status === 'unchanged');
       if (!any && out.errors.length) toast('به‌روزرسانی خودکار قیمت‌ها انجام نشد: ' + friendlyError(out.errors[0].message));
     } else {
@@ -2682,6 +2983,11 @@ document.addEventListener('change', (ev) => {
     return;
   }
   const t = ev.target as HTMLSelectElement;
+  if (t.dataset?.field === 'assetId' && modal?.kind === 'rem') {
+    modal.f.assetId = t.value;
+    renderModal();
+    return;
+  }
   if (t.dataset?.field === 'assetId' && modal?.kind === 'tx' && t.value === '__new') {
     pendingTx = modal.f;
     modal = { kind: 'asset', f: newAssetForm() };
@@ -2712,6 +3018,8 @@ recordHistory();
 if (!store.sample) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
 render();
 autoCheckUpdate();
+checkPriceAlerts();
+scheduleNoteSync();
 
 document.addEventListener('keydown', (ev) => {
   if (!lk.locked || lk.forgot) return;
