@@ -402,8 +402,20 @@ function stockSearchHtml(f: AssetForm): string {
 
 /** قیمت آزمایشی نماد برای تطبیق با سایت بورس؛ هیچ قیمتی ذخیره نمی‌شود */
 /** پاسخ سرور بورس را می‌خواند؛ اگر خطا یا قالب ناشناخته بود، ابتدای متن واقعی پاسخ را در پیام می‌آورد تا علت دیده شود */
+const isWebOnly = () => !(window as unknown as { ReactNativeWebView?: unknown }).ReactNativeWebView;
+const WEB_BLOCKED =
+  'مرورگر اجازه‌ی خواندن مستقیم قیمت بورس را نداد (محدودیت خودِ سایت بورس). در نسخه‌ی وب، قیمت سهم را دستی وارد کنید؛ اپ اندروید آن را خودکار می‌گیرد.';
+
+/** برای بورس در نسخه‌ی وب: اگر مرورگر درخواست را مسدود کرد، پیام روشن و فارسی بده */
+function tsetmcFetch(url: string) {
+  return Promise.resolve(nativeFetch(url)).catch((e: unknown) => {
+    if (isWebOnly() && e instanceof TypeError) throw new Error(WEB_BLOCKED);
+    throw e;
+  });
+}
+
 async function tsetmcCall<T>(url: string, parse: (raw: string) => T): Promise<T> {
-  const res = await nativeFetch(url);
+  const res = await tsetmcFetch(url);
   const raw = await res.text();
   const snip = raw.replace(/\s+/g, ' ').slice(0, 220) || '(پاسخ خالی)';
   if (!res.ok) throw new Error(`پاسخ نامعتبر از سرور بورس (کد ${res.status}). متن پاسخ: ${snip}`);
@@ -2917,7 +2929,7 @@ async function runRefresh(silent = false) {
       store.market = { source: 'tgju', entries: parseMarket(raw) };
     })];
     const stockCodes = store.assets.map((a) => a.priceKeys?.tsetmc).filter((c): c is string => !!c);
-    if (stockCodes.length) providers.push(tsetmcProvider((u) => nativeFetch(u), stockCodes));
+    if (stockCodes.length) providers.push(tsetmcProvider((u) => tsetmcFetch(u), stockCodes));
     const out = await refreshPrices(store.assets, store.prices, providers, { now: Date.now() });
     if (silent) {
       // به‌روزرسانی خودکار هنگام باز شدن: بدون پنجره‌ی نتیجه؛ فقط اگر هیچ قیمتی نیامد خبر می‌دهیم
