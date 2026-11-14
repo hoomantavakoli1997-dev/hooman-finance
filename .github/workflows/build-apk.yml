@@ -32,8 +32,6 @@ jobs:
             <path android:fillColor="#F2C66D" android:pathData="M40,24h16c19,0 30,11 30,30s-11,30 -30,30h-16zM50,34v40h6c13,0 20,-7 20,-20s-7,-20 -20,-20z"/>
           </vector>
           XML
-          sed -i 's|<application |<application android:icon="@drawable/ic_launcher_daram" android:roundIcon="@drawable/ic_launcher_daram" |' android/app/src/main/AndroidManifest.xml
-          grep -q 'android:icon="@drawable/ic_launcher_daram"' android/app/src/main/AndroidManifest.xml
       - name: Shrink APK (only real phone CPUs)
         run: |
           cat >> android/gradle.properties <<'EOF2'
@@ -57,8 +55,24 @@ jobs:
             </domain-config>
           </network-security-config>
           XML
-          sed -i 's|<application |<application android:networkSecurityConfig="@xml/network_security_config" |' android/app/src/main/AndroidManifest.xml
-          grep -q 'android:networkSecurityConfig="@xml/network_security_config"' android/app/src/main/AndroidManifest.xml
+      - name: Configure DARAM Android manifest
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          ET.register_namespace("android", "http://schemas.android.com/apk/res/android")
+          tree = ET.parse(manifest)
+          application = tree.getroot().find("application")
+          if application is None:
+              raise SystemExit("AndroidManifest.xml has no application element")
+          ns = "{http://schemas.android.com/apk/res/android}"
+          application.set(ns + "icon", "@drawable/ic_launcher_daram")
+          application.set(ns + "roundIcon", "@drawable/ic_launcher_daram")
+          application.set(ns + "networkSecurityConfig", "@xml/network_security_config")
+          tree.write(manifest, encoding="utf-8", xml_declaration=True)
+          ET.parse(manifest)
+          PY
       - name: Keep only ARM CPUs in the APK
         run: |
           sed -i '0,/defaultConfig {/s//defaultConfig {\n        ndk { abiFilters "arm64-v8a", "armeabi-v7a" }/' android/app/build.gradle
