@@ -21,6 +21,19 @@ jobs:
         run: |
           node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync('app.json'));a.expo.android.versionCode=${{ github.run_number }};a.expo.extra={build:${{ github.run_number }}};fs.writeFileSync('app.json',JSON.stringify(a,null,2))"
       - run: npx expo prebuild --platform android --no-install
+      - name: Apply DARAM launcher icon
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cat > android/app/src/main/res/drawable/ic_launcher_daram.xml <<'XML'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+            <path android:fillColor="#0B1F3A" android:pathData="M0,0h108v108h-108z"/>
+            <path android:fillColor="#123C66" android:pathData="M20,13h68a8,8 0,0 1,8 8v66a8,8 0,0 1,-8 8h-68a8,8 0,0 1,-8 -8v-66a8,8 0,0 1,8 -8z"/>
+            <path android:fillColor="#2CD2CD" android:pathData="M22,24h10v60h-10z"/>
+            <path android:fillColor="#F2C66D" android:pathData="M40,24h16c19,0 30,11 30,30s-11,30 -30,30h-16zM50,34v40h6c13,0 20,-7 20,-20s-7,-20 -20,-20z"/>
+          </vector>
+          XML
+          sed -i 's|<application |<application android:icon="@drawable/ic_launcher_daram" android:roundIcon="@drawable/ic_launcher_daram" |' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:icon="@drawable/ic_launcher_daram"' android/app/src/main/AndroidManifest.xml
       - name: Shrink APK (only real phone CPUs)
         run: |
           cat >> android/gradle.properties <<'EOF2'
@@ -61,5 +74,5 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/*.apk hooman-finance.apk
           gh release create "apk-${{ github.run_number }}" hooman-finance.apk \
-            --title "Hooman Finance APK #${{ github.run_number }}" \
-            --notes "نسخه‌ی آزمایشی اندروید (ساخته‌شده از شاخه‌ی main)."
+            --title "DARAM APK #${{ github.run_number }}" \
+            --notes "نسخه اندروید DARAM، ساخته‌شده از آخرین commit شاخه main."
