@@ -299,6 +299,22 @@ button.row:active { transform: scale(.992); }
 .remcard { margin-block:.6rem; }
 .row .s .btn.link { padding-inline:0 .8rem; min-height:0; }
 .badge.loss { background: color-mix(in srgb, var(--loss, #d64545) 18%, var(--surface)); }
+
+/* DARAM polish: cohesive icon tiles and a clearer obligations/alerts surface */
+.ico, .market-ico { border: 1px solid color-mix(in srgb, var(--line) 72%, transparent); box-shadow: 0 3px 10px rgba(9, 32, 49, .07); transition: transform .18s ease, box-shadow .18s ease; }
+.row .ico { background: color-mix(in srgb, var(--surface-2) 82%, var(--teal) 18%); }
+.ico svg, .market-ico svg { filter: saturate(1.04); }
+.card-rem { padding: .9rem .85rem; border-color: color-mix(in srgb, var(--teal) 28%, var(--line)); background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--surface) 94%, var(--teal))); }
+.card-rem .section-title { margin: 0; }
+.rem-sub { display:block; color:var(--muted); font-size:.76rem; margin-top:.15rem; }
+.rem-row { padding: .72rem .35rem; gap:.45rem; }
+.rem-row .main { gap:.12rem; }
+.rem-row .badge { flex:none; }
+.rem-action { display:flex; align-items:center; flex-wrap:wrap; gap:.25rem .7rem; }
+.rem-action .btn { min-height:1.7rem; }
+.bell { box-shadow: 0 2px 8px rgba(9,32,49,.06); transition: transform .16s ease, background .16s ease; }
+.bell:active, .ico:active { transform: scale(.96); }
+@media (prefers-reduced-motion: reduce) { .ico, .market-ico, .bell { transition:none; } }
 </style>
 <div id="app" dir="rtl" lang="fa"></div>
 <div id="modal" dir="rtl" lang="fa"></div>
