@@ -837,8 +837,13 @@ function saveCheque() {
   const validation = validateCheque(data);
   if (!validation.valid) return setErr(validation.error ?? 'اطلاعات چک معتبر نیست.');
   const now = new Date().toISOString();
-  const item: Cheque = { ...data, id:f.id ?? nid('ck'), createdAt:f.id ? (store.cheques ?? []).find(x=>x.id===f.id)?.createdAt ?? now : now, updatedAt:now };
+  const previous = f.id ? (store.cheques ?? []).find(x=>x.id===f.id) : undefined;
+  if (previous?.reminderId) store.reminders = remList().filter(r=>r.id!==previous.reminderId);
+  const reminderId = (data.status==='pending' || data.status==='deposited' || data.status==='bounced') ? nid('r') : undefined;
+  const item: Cheque = { ...data, id:f.id ?? nid('ck'), reminderId,
+    createdAt:previous?.createdAt ?? now, updatedAt:now };
   store.cheques = f.mode==='edit' ? (store.cheques ?? []).map(x=>x.id===item.id?item:x) : [...(store.cheques ?? []),item];
+  if (reminderId) remList().push({ id:reminderId, kind:'date', title:`سررسید چک ${item.direction==='received'?'دریافتی':'پرداختی'} · ${item.bank}`, date:item.dueDate, leadDays:1, note:`شماره چک: ${item.number}` });
   save(); closeModal(); render(); toast(f.mode==='edit'?'چک ویرایش شد.':'چک ثبت شد.');
 }
 function chequeListHtml(): string {
@@ -2781,6 +2786,7 @@ document.addEventListener('click', (ev) => {
     }
     case 'check-save': saveCheque(); break;
     case 'check-del': {
+      const removed=(store.cheques ?? []).find(x=>x.id===v); if(removed?.reminderId) store.reminders=remList().filter(r=>r.id!==removed.reminderId);
       store.cheques=(store.cheques ?? []).filter(x=>x.id!==v); save(); render(); toast('چک حذف شد.'); break;
     }
     case 'check-dir':
