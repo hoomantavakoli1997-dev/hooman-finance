@@ -1,5 +1,4 @@
-import * as SimpleIcons from 'simple-icons';
-const BrandIcons = SimpleIcons as unknown as Record<string, { hex: string; path: string } | undefined>;
+import { BRAND_MARKS } from './brand-marks';
 import type { Asset } from '../src/core/types';
 import { CASH_ID } from '../src/core/types';
 
@@ -90,18 +89,10 @@ const coin = (rim: string, face: string, ink: string, label = '', extra = '') =>
     ${label ? `<text x="20" y="24.6" text-anchor="middle" font-size="13" font-weight="800" fill="${ink}" font-family="Vazirmatn,Tahoma,sans-serif">${label}</text>` : ''}`);
 
 function brandIcon(slug: string): string {
-  // نشان‌های واقعی برند از بسته‌ی Simple Icons؛ هیچ مسیر لوگویی در این فایل دست‌ساز نیست.
-  const marks: Record<string, { hex: string; path: string }> = {
-    tether: BrandIcons.siTether ?? BrandIcons.siTetherUsdt,
-    bitcoin: BrandIcons.siBitcoin, ethereum: BrandIcons.siEthereum,
-    ripple: BrandIcons.siXrp ?? BrandIcons.siRipple, solana: BrandIcons.siSolana,
-    dogecoin: BrandIcons.siDogecoin, tron: BrandIcons.siTron, litecoin: BrandIcons.siLitecoin,
-    toncoin: BrandIcons.siTon ?? BrandIcons.siToncoin,
-    'usd-coin': BrandIcons.siUsdc ?? BrandIcons.siUsdcoin,
-  };
-  const mark = marks[slug] ?? null;
-  if (!mark) return wrap('<circle cx="20" cy="20" r="16" fill="#526579"/><text x="20" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">?</text>');
-  return wrap(`<circle cx="20" cy="20" r="18" fill="#${mark.hex}"/><path d="${mark.path}" fill="#fff" transform="translate(8 8) scale(.3333)"/>`);
+  // مسیرهای رسمی برند از Simple Icons (نسخه‌ی ثابت و داخل بسته؛ بدون اینترنت).
+  const mark = BRAND_MARKS[slug];
+  if (!mark) return wrap('<circle cx="20" cy="20" r="16" fill="#526579"/><path d="M12 20h16M20 12v16" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>');
+  return wrap(`<path d="${mark.path}" fill="#${mark.hex}" transform="translate(8 8)"/>`);
 }
 
 const TICKER_COLORS = ['#315b80', '#0f8f8a', '#6b4fa3', '#b5623a', '#3f7d4e', '#a23b5c', '#4a5ab8', '#8a6d1f'];
