@@ -18,6 +18,7 @@ export function iconKind(a: { id: string; name: string; unit?: string; kind?: As
   if (/geram24|sekee|sekeb|sekke|nim|rob|mesghal|gold|abshodeh|coin/.test(k)) return { t: 'gold' };
   if (a.id === 'usdt' || /usdt|tether/.test(k)) return { t: 'brand', slug: 'tether' };
   if (a.id === 'usd' || k === 'price_dollar_rl') return { t: 'flag', code: 'us' };
+  if (/irr|rial|iran/.test(a.id.toLowerCase() + ' ' + k)) return { t: 'flag', code: 'ir' };
   const f = /^price_(eur|gbp|jpy|try|aed|cny)/.exec(k);
   if (f) return { t: 'flag', code: f[1] };
   if (a.kind === 'crypto' || /^crypto/.test(k)) {
@@ -47,6 +48,8 @@ const star = (cx: number, cy: number, r: number, fill: string) => {
 
 function flag(code: string): string {
   switch (code) {
+    case 'ir':
+      return wrap(circle('<rect width="40" height="13.4" y="4" fill="#239f40"/><rect width="40" height="13.4" y="13.3" fill="#fff"/><rect width="40" height="13.4" y="22.6" fill="#da2938"/><path d="M18 15.5l2-2 2 2v7l-2 2-2-2zM15.5 17.5h9M15.5 20.5h9" fill="none" stroke="#da2938" stroke-width="1.2"/>', 'cp-ir'));
     case 'us': {
       let s = '<rect width="40" height="40" fill="#fff"/>';
       for (let i = 0; i < 7; i++) s += `<rect y="${(4 + i * 4.6).toFixed(2)}" width="40" height="2.3" fill="#c8323c"/>`;
@@ -141,8 +144,8 @@ export function marketIcon(key: string, category: string, title: string): string
   if (category === 'gold') return iconSvg({ t: 'gold', label: /18|geram18/.test(k) ? '۱۸' : '' });
   if (category === 'metal') return iconSvg({ t: /silver|noghre/.test(k) ? 'silver' : 'gold' });
   if (category === 'currency') {
-    const code = k === 'price_dollar_rl' ? 'us' : /^price_([a-z]{3})$/.exec(k)?.[1] ?? '';
-    const flagCodes: Record<string, string> = { usd: 'us', eur: 'eur', gbp: 'gbp', jpy: 'jpy', try: 'try', aed: 'aed', cny: 'cny' };
+    const code = k === 'price_dollar_rl' ? 'us' : /irr|rial/.test(k) ? 'ir' : /^price_([a-z]{3})$/.exec(k)?.[1] ?? '';
+    const flagCodes: Record<string, string> = { usd: 'us', irr: 'ir', eur: 'eur', gbp: 'gbp', jpy: 'jpy', try: 'try', aed: 'aed', cny: 'cny', ir: 'ir' };
     return iconSvg(flagCodes[code] ? { t: 'flag', code: flagCodes[code] } : { t: 'currency' });
   }
   if (category === 'crypto') {
