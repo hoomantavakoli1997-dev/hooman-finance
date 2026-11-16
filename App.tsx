@@ -139,7 +139,7 @@ export default function App() {
         return;
       }
       try {
-        const target = `${FileSystem.cacheDirectory}hooman-finance-update.apk`;
+        const target = `${FileSystem.cacheDirectory}dara-update.apk`;
         await FileSystem.deleteAsync(target, { idempotent: true });
         let lastPct = -1;
         const dl = FileSystem.createDownloadResumable(url, target, {}, (p) => {
