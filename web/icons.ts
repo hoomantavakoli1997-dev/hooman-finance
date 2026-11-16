@@ -1,3 +1,4 @@
+import { siTether, siBitcoin, siEthereum, siXrp, siSolana, siDogecoin, siTron, siLitecoin, siTon, siUsdc } from 'simple-icons';
 import type { Asset } from '../src/core/types';
 import { CASH_ID } from '../src/core/types';
 
@@ -88,22 +89,15 @@ const coin = (rim: string, face: string, ink: string, label = '', extra = '') =>
     ${label ? `<text x="20" y="24.6" text-anchor="middle" font-size="13" font-weight="800" fill="${ink}" font-family="Vazirmatn,Tahoma,sans-serif">${label}</text>` : ''}`);
 
 function brandIcon(slug: string): string {
-  // نشان‌های برداری آفلاین برای شناسه‌های شناخته‌شده‌ی دارایی‌ها
-  const marks: Record<string, { bg: string; art: string }> = {
-    tether: { bg: '#26a17b', art: '<path d="M8 10h24M20 10v20M12 15h16" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/><path d="M12 19c2.4 2 13.6 2 16 0" fill="none" stroke="#fff" stroke-width="2.2"/>' },
-    bitcoin: { bg: '#f7931a', art: '<path d="M16 8v24M23 8v24M13 12h10a5 5 0 0 1 0 10H13m0 0h11a5 5 0 0 1 0 10H13" fill="none" stroke="#fff" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>' },
-    ethereum: { bg: '#627eea', art: '<path d="M20 4 9 21l11 6 11-6L20 4Z" fill="#fff"/><path d="m9 23 11 13 11-13-11 6-11-6Z" fill="#c5d2ff"/>' },
-    ripple: { bg: '#23292f', art: '<path d="M8 10c3.5 0 4.5 5 8 5s4.5-5 8-5h8M8 30c3.5 0 4.5-5 8-5s4.5 5 8 5h8" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>' },
-    solana: { bg: '#171b2b', art: '<path d="M10 10h22l-4 5H6l4-5Zm0 10h22l-4 5H6l4-5Zm0 10h22l-4 5H6l4-5Z" fill="#50e3c2"/>' },
-    dogecoin: { bg: '#c2a633', art: '<path d="M13 7h8c8 0 12 5 12 13s-4 13-12 13h-8V7Zm0 12h14" fill="none" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"/>' },
-    tron: { bg: '#e84142', art: '<path d="m8 9 24 4-12 22L8 9Zm0 0 12 13 12-9M20 22l12-9" fill="none" stroke="#fff" stroke-width="2.7" stroke-linejoin="round"/>' },
-    litecoin: { bg: '#345d9d', art: '<path d="m24 7-7 19h10l-2 5H9l2-5 4-2 6-17h3Zm-10 13 12-5" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' },
-    toncoin: { bg: '#0098ea', art: '<path d="M20 5 34 13 20 36 6 13 20 5Z" fill="none" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/><path d="M6 13h28M20 13v23" stroke="#fff" stroke-width="2.2"/>' },
-    'usd-coin': { bg: '#2775ca', art: '<circle cx="20" cy="20" r="15" fill="none" stroke="#fff" stroke-width="3"/><path d="M27 13c-2-2-10-3-12 1-3 6 11 5 11 10 0 5-8 7-13 3M20 8v24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>' },
-    crypto: { bg: '#5a4bd1', art: '<path d="M20 5 33 13v14L20 35 7 27V13L20 5Z" fill="none" stroke="#fff" stroke-width="2.5"/><circle cx="20" cy="20" r="4" fill="#fff"/>' },
+  // نشان‌های واقعی برند از بسته‌ی Simple Icons؛ هیچ مسیر لوگویی در این فایل دست‌ساز نیست.
+  const marks: Record<string, { hex: string; path: string }> = {
+    tether: siTether, bitcoin: siBitcoin, ethereum: siEthereum, ripple: siXrp,
+    solana: siSolana, dogecoin: siDogecoin, tron: siTron, litecoin: siLitecoin,
+    toncoin: siTon, 'usd-coin': siUsdc,
   };
-  const b = marks[slug] || marks.crypto;
-  return wrap('<circle cx="20" cy="20" r="18" fill="' + b.bg + '"/>' + b.art);
+  const mark = marks[slug] ?? null;
+  if (!mark) return wrap('<circle cx="20" cy="20" r="16" fill="#526579"/><text x="20" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">?</text>');
+  return wrap(`<circle cx="20" cy="20" r="18" fill="#${mark.hex}"/><path d="${mark.path}" fill="#fff" transform="translate(8 8) scale(.3333)"/>`);
 }
 
 const TICKER_COLORS = ['#315b80', '#0f8f8a', '#6b4fa3', '#b5623a', '#3f7d4e', '#a23b5c', '#4a5ab8', '#8a6d1f'];
