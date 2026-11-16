@@ -1176,8 +1176,8 @@ async function makeBackup() {
   setErr('');
   try {
     const stamp = new Date().toISOString();
-    const text = await encryptBackup(JSON.stringify({ app: 'hooman-finance', at: stamp, store: { ...store, settings: { ...store.settings, lock: undefined } } }), f.pass);
-    const name = `hooman-finance-backup-${todayIso()}.hfbackup`;
+    const text = await encryptBackup(JSON.stringify({ app: 'dara', at: stamp, store: { ...store, settings: { ...store.settings, lock: undefined } } }), f.pass);
+    const name = `dara-backup-${todayIso()}.hfbackup`;
     store.settings.lastBackup = stamp;
     save();
     if (inApp()) {
@@ -1205,7 +1205,7 @@ async function restoreCheck() {
   setErr('');
   try {
     const obj = JSON.parse(await decryptBackup(f.text, f.pass)) as { app?: string; at?: string; store?: unknown };
-    const st = obj.app === 'hooman-finance' ? normalizeStore(obj.store) : null;
+    const st = (obj.app === 'dara' || obj.app === 'hooman-finance') ? normalizeStore(obj.store) : null;
     if (!st) throw new BackupError('محتوای پشتیبان معتبر نیست.');
     f.parsed = st;
     f.at = typeof obj.at === 'string' ? obj.at : '';
@@ -1258,7 +1258,7 @@ function renderLock() {
   lockEl.hidden = !show;
   appEl.toggleAttribute('inert', show);
   if (!show || !lock) { lockEl.innerHTML = ''; return; }
-  const brand = '<div class="lk-brand">Hooman Finance</div>';
+  const brand = '<div class="lk-brand">دارا</div>';
   if (!lk.locked) { lockEl.innerHTML = `<div class="lockscr">${brand}</div>`; return; }
   if (lk.forgot) {
     lockEl.innerHTML = `<div class="lockscr">${brand}
