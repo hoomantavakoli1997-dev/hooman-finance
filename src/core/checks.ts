@@ -14,6 +14,7 @@ export interface Cheque {
   dueDate: string;
   status: CheckStatus;
   note?: string;
+  reminderId?: string;
   createdAt: string;
   updatedAt: string;
 }
