@@ -6,6 +6,7 @@ import {
   ChangeResult, Portfolio, TxDraft, parseDec,
 } from '../src/core/engine';
 import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
+import { Cheque, CheckDirection, CheckStatus, chequeDue, sortCheques, validateCheque } from '../src/core/checks';
 import { assetIcon, iconKind, iconSvg, marketIcon } from './icons';
 import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
 import { DEFAULT_PRICE_KEYS, PriceResult, TGJU_URL, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
@@ -61,6 +62,7 @@ interface Store {
   reminders?: Reminder[];
   /** تاریخچه‌ی ارزش کل سرمایه؛ فقط از زمان نصب نسخه‌ی دارای این قابلیت ثبت می‌شود. */
   history?: HistoryPoint[];
+  cheques?: Cheque[];
 }
 
 const KEY = 'hooman-finance-prototype-v1';
@@ -116,7 +118,7 @@ function seed(): Store {
 }
 
 function emptyStore(settings: Settings, market?: MarketSnapshot): Store {
-  return { v: 1, sample: false, market: market ?? bundledMarket(), assets: DEFAULT_ASSETS.map((a) => ({ ...a })), txs: [], prices: {}, people: [], debts: [], payments: [], settings };
+  return { v: 1, sample: false, market: market ?? bundledMarket(), assets: DEFAULT_ASSETS.map((a) => ({ ...a })), txs: [], prices: {}, people: [], debts: [], payments: [], cheques: [], settings };
 }
 
 function load(): Store {
@@ -131,6 +133,7 @@ function load(): Store {
         if (!Array.isArray(s.payments)) s.payments = [];
         if (!Array.isArray(s.history)) s.history = [];
         if (!Array.isArray(s.reminders)) s.reminders = [];
+        if (!Array.isArray(s.cheques)) s.cheques = [];
         return s;
       }
     }
@@ -243,7 +246,7 @@ const ICONS: Record<Tab, string> = {
   home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/>',
   assets: '<circle cx="9" cy="12" r="6"/><path d="M15 6.3A6 6 0 1 1 15 17.7"/>',
   txs: '<path d="M7 4v16M7 20l-3-3M7 20l3-3"/><path d="M17 20V4M17 4l-3 3M17 4l3 3"/>',
-  people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.4 2.7-5.5 6-5.5s6 2.1 6 5.5"/><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.8c1.8.7 3 2.3 3 5.2"/>',
+  people: '<rect x="4" y="6" width="16" height="13" rx="2"/><path d="M4 10h16M8 15h4"/><path d="M18 4h3v13"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
 };
 const TAB_LABEL: Record<Tab, string> = {
@@ -782,6 +785,83 @@ function netLabel(net: Decimal): string {
     : `<span class="loss">شما به او بدهکارید: ${money(net.neg())}</span>`;
 }
 
+/* ------------------------------ مدیریت چک‌ها ------------------------------ */
+interface ChequeForm {
+  mode: 'add' | 'edit'; id?: string; direction: CheckDirection; number: string; bank: string;
+  accountHolder: string; amount: string; iy: string; im: string; iday: string;
+  dy: string; dm: string; dday: string; status: CheckStatus; note: string; error: string;
+}
+const CHECK_STATUS: Record<CheckStatus, string> = {
+  pending: 'در انتظار سررسید', deposited: 'ارائه‌شده به بانک', cleared: 'وصول / پرداخت‌شده',
+  bounced: 'برگشت‌خورده', cancelled: 'باطل‌شده',
+};
+function newChequeForm(direction: CheckDirection = 'received'): ChequeForm {
+  const today = jf(todayIso());
+  const due = jf(addJalaliMonths(todayIso(), 1));
+  return { mode: 'add', direction, number: '', bank: '', accountHolder: '', amount: '',
+    iy: today.y, im: today.m, iday: today.d, dy: due.y, dm: due.m, dday: due.d,
+    status: 'pending', note: '', error: '' };
+}
+function editChequeForm(c: Cheque): ChequeForm {
+  const issue = jf(c.issueDate), due = jf(c.dueDate);
+  return { mode: 'edit', id: c.id, direction: c.direction, number: c.number, bank: c.bank,
+    accountHolder: c.accountHolder, amount: rialToField(c.amount), iy: issue.y, im: issue.m, iday: issue.d,
+    dy: due.y, dm: due.m, dday: due.d, status: c.status, note: c.note ?? '', error: '' };
+}
+function chequeFormHtml(f: ChequeForm): string {
+  const dirs = [['received','چک دریافتی'],['issued','چک پرداختی']] as [string,string][];
+  const status = Object.entries(CHECK_STATUS).map(([k,v]) => `<option value="${k}" ${f.status===k?'selected':''}>${v}</option>`).join('');
+  return sheet(`<h2>${f.mode==='edit'?'ویرایش چک':'ثبت چک جدید'}</h2>
+    <div class="field"><span class="lab">نوع چک</span>${seg('check-dir', f.direction, dirs)}</div>
+    <div class="field"><label for="ck-number">شماره چک / شناسه صیادی</label><input id="ck-number" data-field="number" value="${esc(f.number)}" autocomplete="off"></div>
+    <div class="field"><label for="ck-bank">بانک</label><input id="ck-bank" data-field="bank" value="${esc(f.bank)}"></div>
+    <div class="field"><label for="ck-holder">صاحب حساب / صادرکننده</label><input id="ck-holder" data-field="accountHolder" value="${esc(f.accountHolder)}"></div>
+    <div class="field"><label for="ck-amount">مبلغ (${unitLabel()})</label><input id="ck-amount" data-field="amount" inputmode="decimal" value="${esc(f.amount)}"></div>
+    <div class="field"><span class="lab">تاریخ صدور (سال، ماه، روز شمسی)</span>${dateFields(f.iy,f.im,f.iday,['ck-iy','ck-im','ck-id'],['iy','im','iday'])}</div>
+    <div class="field"><span class="lab">تاریخ سررسید (سال، ماه، روز شمسی)</span>${dateFields(f.dy,f.dm,f.dday,['ck-dy','ck-dm','ck-dd'],['dy','dm','dday'])}</div>
+    <div class="field"><label for="ck-status">وضعیت چک</label><select id="ck-status" data-field="status">${status}</select></div>
+    <div class="field"><label for="ck-note">توضیحات</label><textarea id="ck-note" data-field="note" rows="2">${esc(f.note)}</textarea></div>
+    <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
+    <div class="actions"><button class="btn" data-action="check-save">ذخیره چک</button><button class="btn ghost" data-action="close">انصراف</button></div>`);
+}
+function saveCheque() {
+  if (modal?.kind !== 'check') return;
+  const f = modal.f;
+  const issueDate = jalaliToIso(Number(toEn(f.iy)),Number(toEn(f.im)),Number(toEn(f.iday)));
+  const dueDate = jalaliToIso(Number(toEn(f.dy)),Number(toEn(f.dm)),Number(toEn(f.dday)));
+  if (!issueDate || !dueDate) return setErr('تاریخ صدور یا سررسید معتبر نیست.');
+  const amount = parseField('مبلغ چک',f.amount);
+  if (typeof amount === 'string') return setErr(amount);
+  const data = { direction:f.direction, number:f.number.trim(), bank:f.bank.trim(), accountHolder:f.accountHolder.trim(),
+    amount:toRialDec(amount).toString(), issueDate, dueDate, status:f.status, note:f.note.trim() || undefined };
+  const validation = validateCheque(data);
+  if (!validation.valid) return setErr(validation.error ?? 'اطلاعات چک معتبر نیست.');
+  const now = new Date().toISOString();
+  const previous = f.id ? (store.cheques ?? []).find(x=>x.id===f.id) : undefined;
+  if (previous?.reminderId) store.reminders = remList().filter(r=>r.id!==previous.reminderId);
+  const reminderId = (data.status==='pending' || data.status==='deposited' || data.status==='bounced') ? nid('r') : undefined;
+  const item: Cheque = { ...data, id:f.id ?? nid('ck'), reminderId,
+    createdAt:previous?.createdAt ?? now, updatedAt:now };
+  store.cheques = f.mode==='edit' ? (store.cheques ?? []).map(x=>x.id===item.id?item:x) : [...(store.cheques ?? []),item];
+  if (reminderId) remList().push({ id:reminderId, kind:'date', title:`سررسید چک ${item.direction==='received'?'دریافتی':'پرداختی'} · ${item.bank}`, date:item.dueDate, leadDays:1, note:`شماره چک: ${item.number}` });
+  save(); closeModal(); render(); toast(f.mode==='edit'?'چک ویرایش شد.':'چک ثبت شد.');
+}
+function chequeListHtml(): string {
+  const items = sortCheques(store.cheques ?? []);
+  if (!items.length) return '<div class="empty">هنوز چکی ثبت نشده است.</div>';
+  return `<div class="list">${items.map(c=>{
+    const due=chequeDue(c,todayIso());
+    const dir=c.direction==='received'?'دریافتی':'پرداختی';
+    const dueLabel=due==='overdue'?'سررسید گذشته':due==='today'?'سررسید امروز':due==='upcoming'?'سررسید آینده':'مختومه';
+    return `<div class="row"><div class="main"><span class="t">${dir} · ${esc(c.bank)} · ${money(Decimal.of(c.amount))}</span>
+      <span class="s">شماره: ${esc(c.number)} · ${esc(c.accountHolder)}</span>
+      <span class="s">سررسید: ${dateFa(c.dueDate)} · ${CHECK_STATUS[c.status]}</span>
+      <span class="s"><button class="btn link" data-action="check-edit" data-v="${esc(c.id)}">ویرایش</button>
+      <button class="btn link bad" data-action="check-del" data-v="${esc(c.id)}">حذف</button></span></div>
+      <span class="badge ${due==='overdue'?'sell':due==='closed'?'':'buy'}">${dueLabel}</span></div>`;
+  }).join('')}</div>`;
+}
+
 function viewPeople(): string {
   if (view.person) return viewPerson(view.person);
   const sum = computePeople(peopleData(), todayIso());
@@ -795,11 +875,19 @@ function viewPeople(): string {
         <div class="side">${netLabel(ps.net)}</div></button>`,
     )
     .join('');
+  const chequeItems = store.cheques ?? [];
+  const incoming = chequeItems.filter(c=>c.direction==='received' && c.status!=='cleared' && c.status!=='cancelled').length;
+  const outgoing = chequeItems.filter(c=>c.direction==='issued' && c.status!=='cleared' && c.status!=='cancelled').length;
   return `${header('تعهدات مالی')}
     <div class="grid2">
       <div class="tile"><span class="k">جمع طلب‌های شما</span><span class="v gain">${money(sum.receivable)}</span></div>
       <div class="tile"><span class="k">جمع بدهی‌های شما</span><span class="v loss">${money(sum.payable)}</span></div>
     </div>
+    <h2 class="section-title">چک‌ها</h2>
+    <div class="grid2"><div class="tile"><span class="k">چک‌های دریافتی باز</span><span class="v">${toFa(String(incoming))} فقره</span></div><div class="tile"><span class="k">چک‌های پرداختی باز</span><span class="v">${toFa(String(outgoing))} فقره</span></div></div>
+    <div class="actions"><button class="btn" data-action="check-new" data-v="received">ثبت چک دریافتی</button><button class="btn ghost" data-action="check-new" data-v="issued">ثبت چک پرداختی</button></div>
+    ${chequeListHtml()}
+    <h2 class="section-title">طلب‌ها و بدهی‌ها</h2>
     <div class="actions">
       <button class="btn" data-action="new-debt" data-v="lent">به کسی پول دادم</button>
       <button class="btn" data-action="new-debt" data-v="borrowed">وام یا قرض گرفتم</button>
@@ -1161,7 +1249,7 @@ function normalizeStore(raw: unknown): Store | null {
   if (!s || s.v !== 1 || !Array.isArray(s.assets) || !Array.isArray(s.txs) || !s.settings || typeof s.settings !== 'object') return null;
   if (!s.prices || typeof s.prices !== 'object') s.prices = {};
   if (!s.market || !Array.isArray(s.market.entries)) s.market = bundledMarket();
-  for (const k of ['people', 'debts', 'payments', 'history', 'reminders'] as const) if (!Array.isArray(s[k])) (s as unknown as Record<string, unknown[]>)[k] = [];
+  for (const k of ['people', 'debts', 'payments', 'history', 'reminders', 'cheques'] as const) if (!Array.isArray(s[k])) (s as unknown as Record<string, unknown[]>)[k] = [];
   s.sample = false;
   return s;
 }
@@ -1817,6 +1905,7 @@ type Modal =
   | { kind: 'asset'; f: AssetForm }
   | { kind: 'debt'; f: DebtForm }
   | { kind: 'pay'; f: PayForm }
+  | { kind: 'check'; f: ChequeForm }
   | { kind: 'quote'; key: string }
   | { kind: 'paste'; f: { text: string; error: string } }
   | { kind: 'prices'; results: PriceResult[]; errors: { provider: string; message: string }[] }
@@ -2155,6 +2244,8 @@ function renderModal() {
       inner = `<h2>${title}</h2>${err}<div class="actions">${cancel}</div>`;
     }
     modalEl.innerHTML = sheet(inner);
+  } else if (modal.kind === 'check') {
+    modalEl.innerHTML = chequeFormHtml(modal.f);
   } else if (modal.kind === 'rem') {
     modalEl.innerHTML = remModalHtml(modal.f);
   } else if (modal.kind === 'backup') {
@@ -2687,6 +2778,20 @@ document.addEventListener('click', (ev) => {
       toNative({ type: 'update-install', url: upd.url });
       render();
       break;
+    case 'check-new':
+      modal = { kind:'check', f:newChequeForm(v==='issued'?'issued':'received') }; renderModal();
+      break;
+    case 'check-edit': {
+      const c=(store.cheques ?? []).find(x=>x.id===v); if(c){modal={kind:'check',f:editChequeForm(c)};renderModal();} break;
+    }
+    case 'check-save': saveCheque(); break;
+    case 'check-del': {
+      const removed=(store.cheques ?? []).find(x=>x.id===v); if(removed?.reminderId) store.reminders=remList().filter(r=>r.id!==removed.reminderId);
+      store.cheques=(store.cheques ?? []).filter(x=>x.id!==v); save(); render(); toast('چک حذف شد.'); break;
+    }
+    case 'check-dir':
+      if(modal?.kind==='check'){modal.f.direction=v==='issued'?'issued':'received';renderModal();}
+      break;
     case 'open-person':
       view.person = v;
       render();
@@ -3011,6 +3116,7 @@ document.addEventListener('change', (ev) => {
     renderModal();
     return;
   }
+  if (modal?.kind === 'check' && t.dataset?.field) { (modal.f as unknown as Record<string,string>)[t.dataset.field]=t.value; return; }
   if (t.dataset?.field === 'assetId' && modal?.kind === 'tx' && t.value === '__new') {
     pendingTx = modal.f;
     modal = { kind: 'asset', f: newAssetForm() };
