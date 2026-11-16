@@ -247,7 +247,7 @@ const ICONS: Record<Tab, string> = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
 };
 const TAB_LABEL: Record<Tab, string> = {
-  home: 'خانه', assets: 'دارایی‌ها', txs: 'معاملات', people: 'اشخاص', settings: 'تنظیمات',
+  home: 'خانه', assets: 'دارایی‌ها', txs: 'معاملات', people: 'تعهدات', settings: 'تنظیمات',
 };
 
 function navHtml(): string {
@@ -469,7 +469,6 @@ function viewHome(pf: Portfolio): string {
 
   return `${header('دارا', 'مدیریت دارایی‌های شخصی')}
     ${sampleNote()}
-    ${remCard()}
     <section class="hero compact" aria-label="خلاصه‌ی دارایی">
       <div class="between"><span class="label">سرمایه‌ی خالص</span>
         <button class="eye" data-action="toggle-hide" aria-pressed="${hidden()}" aria-label="${hidden() ? 'نمایش مبلغ‌ها' : 'پنهان کردن مبلغ‌ها'}">${hidden() ? EYE_OFF : EYE_ON}</button></div>
@@ -796,7 +795,7 @@ function viewPeople(): string {
         <div class="side">${netLabel(ps.net)}</div></button>`,
     )
     .join('');
-  return `${header('اشخاص و حساب‌ها')}
+  return `${header('تعهدات مالی')}
     <div class="grid2">
       <div class="tile"><span class="k">جمع طلب‌های شما</span><span class="v gain">${money(sum.receivable)}</span></div>
       <div class="tile"><span class="k">جمع بدهی‌های شما</span><span class="v loss">${money(sum.payable)}</span></div>
