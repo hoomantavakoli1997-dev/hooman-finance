@@ -1,4 +1,5 @@
-import { siTether, siBitcoin, siEthereum, siXrp, siSolana, siDogecoin, siTron, siLitecoin, siTon, siUsdc } from 'simple-icons';
+import * as SimpleIcons from 'simple-icons';
+const BrandIcons = SimpleIcons as unknown as Record<string, { hex: string; path: string } | undefined>;
 import type { Asset } from '../src/core/types';
 import { CASH_ID } from '../src/core/types';
 
@@ -91,9 +92,12 @@ const coin = (rim: string, face: string, ink: string, label = '', extra = '') =>
 function brandIcon(slug: string): string {
   // نشان‌های واقعی برند از بسته‌ی Simple Icons؛ هیچ مسیر لوگویی در این فایل دست‌ساز نیست.
   const marks: Record<string, { hex: string; path: string }> = {
-    tether: siTether, bitcoin: siBitcoin, ethereum: siEthereum, ripple: siXrp,
-    solana: siSolana, dogecoin: siDogecoin, tron: siTron, litecoin: siLitecoin,
-    toncoin: siTon, 'usd-coin': siUsdc,
+    tether: BrandIcons.siTether ?? BrandIcons.siTetherUsdt,
+    bitcoin: BrandIcons.siBitcoin, ethereum: BrandIcons.siEthereum,
+    ripple: BrandIcons.siXrp ?? BrandIcons.siRipple, solana: BrandIcons.siSolana,
+    dogecoin: BrandIcons.siDogecoin, tron: BrandIcons.siTron, litecoin: BrandIcons.siLitecoin,
+    toncoin: BrandIcons.siTon ?? BrandIcons.siToncoin,
+    'usd-coin': BrandIcons.siUsdc ?? BrandIcons.siUsdcoin,
   };
   const mark = marks[slug] ?? null;
   if (!mark) return wrap('<circle cx="20" cy="20" r="16" fill="#526579"/><text x="20" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">?</text>');
