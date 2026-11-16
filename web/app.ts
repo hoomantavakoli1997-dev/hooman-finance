@@ -1646,8 +1646,9 @@ function checkPriceAlerts() {
     const p = store.prices[r.assetId];
     const price = p ? parseDec(p.price) : null;
     if (!p || !price) continue;
-    // قیمت خودکارِ قدیمی نباید هشدار بدهد
-    if (p.source === 'auto' && Date.now() - Date.parse(p.at) > 3 * 86_400_000) continue;
+    // قیمت قدیمی (دستی یا خودکار) نباید هشدار کاذب ایجاد کند.
+    const priceAt = Date.parse(p.at);
+    if (!Number.isFinite(priceAt) || Date.now() - priceAt > 3 * 86_400_000) continue;
     if (!priceHit(r, price)) continue;
     r.firedAt = new Date().toISOString();
     r.seen = false;
@@ -1675,14 +1676,21 @@ function scheduleNoteSync() {
 let remPerm: 'unknown' | 'granted' | 'denied' = 'unknown';
 
 function remCard(): string {
-  const act = activeEvents(remEvents(), todayIso());
+  // تعهدات نزدیک و سررسیدهای گذشته را در خانه نشان می‌دهیم؛ نه فقط روزی که اعلان فعال می‌شود.
+  const events = remEvents(60).slice(0, 3);
   const fired = firedUnseen();
-  if (!act.length && !fired.length) return '';
+  if (!events.length && !fired.length) return '';
   const rows = [
-    ...fired.map((r) => `<div class="row"><div class="main"><span class="t">${r.side === 'sell' ? 'وقت فروش' : 'وقت خرید'}: ${esc(assetName(r.assetId))}</span><span class="s">${priceNote(r)}</span></div><span class="badge buy">رسید</span></div>`),
-    ...act.slice(0, 3).map((e) => `<div class="row"><div class="main"><span class="t">${esc(e.title)}</span><span class="s">${dateFa(e.dueDate)}${e.amount ? ' · ' + money(Decimal.of(e.amount)) : ''}</span></div>${dueBadge(e.dueDate)}</div>`),
+    ...fired.slice(0, 2).map((r) => `<div class="row rem-row"><div class="main"><span class="t">${r.side === 'sell' ? 'وقت فروش' : 'وقت خرید'}: ${esc(assetName(r.assetId))}</span><span class="s">${priceNote(r)}</span><span class="s">قیمت فعلی: ${store.prices[r.assetId] ? money(Decimal.of(store.prices[r.assetId].price)) : 'ثبت نشده'}</span></div><span class="badge buy">هشدار</span></div>`),
+    ...events.map((e) => {
+      const isInst = e.kind === 'installment';
+      const action = isInst
+        ? `<button class="btn link" data-action="rem-pay" data-v="${esc(e.id.split(':')[1])}">ثبت پرداخت</button>`
+        : `<button class="btn link" data-action="rem-done" data-v="${esc(e.id.slice(5))}">انجام شد</button>`;
+      return `<div class="row rem-row"><div class="main"><span class="t">${esc(e.title)}</span><span class="s">${dateFa(e.dueDate)}${e.amount ? ' · ' + money(Decimal.of(e.amount)) : ''}</span><span class="s rem-action">${action}</span></div>${dueBadge(e.dueDate)}</div>`;
+    }),
   ];
-  return `<section class="remcard" aria-label="یادآورها"><div class="between"><h2 class="section-title">یادآورها</h2><button class="btn link" data-action="rem-open">همه‌ی یادآورها</button></div><div class="list">${rows.join('')}</div></section>`;
+  return `<section class="remcard card-rem" aria-label="تعهدات و هشدارها"><div class="between"><div><h2 class="section-title">تعهدات و هشدارها</h2><span class="rem-sub">قسط‌های نزدیک، سررسیدها و هشدارهای قیمت</span></div><button class="btn link" data-action="rem-open">مدیریت</button></div><div class="list">${rows.join('')}</div></section>`;
 }
 
 interface RemForm {
@@ -1719,7 +1727,7 @@ function remModalHtml(f: RemForm): string {
       <div class="field"><span class="lab">وقتی قیمت…</span>${seg('rem-cond', f.cond, [['above', 'بالاتر رفت'], ['below', 'پایین‌تر آمد']])}</div>
       <div class="field"><label for="r-target">قیمت هدف هر واحد (${unitLabel()})</label>
         <input id="r-target" data-field="target" inputmode="decimal" value="${esc(f.target)}" autocomplete="off"></div>
-      <div class="note info"><span>قیمت‌ها وقتی بررسی می‌شوند که برنامه باز باشد یا قیمت‌ها به‌روز شوند. برنامه در پس‌زمینه قیمت نمی‌گیرد.</span></div>
+      <div class="note info"><span>هشدار قیمت پس از دریافت قیمت تازه یا باز شدن برنامه بررسی می‌شود. قیمت‌های قدیمی‌تر از ۳ روز برای فعال‌کردن هشدار معتبر نیستند؛ دریافت پیوسته‌ی قیمت در پس‌زمینه انجام نمی‌شود.</span></div>
       <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
       <div class="actions"><button class="btn" data-action="rem-save-price">ذخیره</button><button class="btn ghost" data-action="rem-back">بازگشت</button></div>`);
   }
@@ -1737,9 +1745,9 @@ function remModalHtml(f: RemForm): string {
     const p = store.prices[r.assetId];
     return `<div class="row"><div class="main"><span class="t">${esc(assetName(r.assetId))}</span>
       <span class="s">${priceNote(r)}</span>
-      <span class="s">${p ? 'قیمت فعلی: ' + money(Decimal.of(p.price)) : 'قیمت فعلی ثبت نشده'}</span>
-      <span class="s">${r.firedAt ? `<button class="btn link" data-action="rem-rearm" data-v="${esc(r.id)}">دوباره فعال کن</button>` : ''}<button class="btn link bad" data-action="rem-del" data-v="${esc(r.id)}">حذف</button></span></div>
-      <span class="badge ${r.firedAt ? 'buy' : ''}">${r.firedAt ? 'رسید' : 'در انتظار'}</span></div>`;
+      <span class="s">${p ? 'قیمت فعلی: ' + money(Decimal.of(p.price)) + ' · ' + priceLabel(p) : 'قیمت فعلی ثبت نشده'}</span>
+      <span class="s rem-action">${r.firedAt ? `<button class="btn link" data-action="rem-rearm" data-v="${esc(r.id)}">فعال‌سازی مجدد</button>` : '<span class="muted">با به‌روزرسانی قیمت بررسی می‌شود</span>'}<button class="btn link bad" data-action="rem-del" data-v="${esc(r.id)}">حذف</button></span></div>
+      <span class="badge ${r.firedAt ? 'buy' : ''}">${r.firedAt ? 'فعال‌شده' : 'در انتظار'}</span></div>`;
   }).join('');
   const perm = !inApp()
     ? '<div class="note info"><span>اعلان گوشی فقط در برنامه‌ی اندروید کار می‌کند. در این نسخه‌ی وب، یادآورها فقط داخل صفحه دیده می‌شوند.</span></div>'
