@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Dara Android APK
 on:
   push:
     branches: [main]
@@ -18,9 +18,11 @@ jobs:
       - run: npm install
       - run: npm test
       - run: npm run web:build
-      - name: Set build number
+      - name: Set build number and APK filename
         run: |
           node -e "const fs=require('fs');const a=JSON.parse(fs.readFileSync('app.json'));a.expo.android.versionCode=${{ github.run_number }};a.expo.extra={build:${{ github.run_number }}};fs.writeFileSync('app.json',JSON.stringify(a,null,2))"
+          VERSION=$(node -p "require('./app.json').expo.version")
+          echo "DARA_APK_NAME=Dara-v${VERSION}-build${{ github.run_number }}.apk" >> "$GITHUB_ENV"
       - run: npx expo prebuild --platform android --no-install
       - name: Apply Dara launcher icon
         run: |
@@ -79,16 +81,17 @@ jobs:
           sed -i '0,/defaultConfig {/s//defaultConfig {\n        ndk { abiFilters "arm64-v8a", "armeabi-v7a" }/' android/app/build.gradle
           grep -n -A1 "defaultConfig {" android/app/build.gradle | head -4
       - run: cd android && chmod +x gradlew && ./gradlew assembleRelease
+      - name: Name APK with Dara version
+        run: cp android/app/build/outputs/apk/release/*.apk "$DARA_APK_NAME"
       - uses: actions/upload-artifact@v4
         with:
-          name: hooman-finance-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          name: Dara-v${{ github.run_number }}-apk
+          path: Dara-v*-build*.apk
       - name: Publish APK as a release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/release/*.apk hooman-finance.apk
-          gh release create "apk-${{ github.run_number }}" hooman-finance.apk \
+          gh release create "apk-${{ github.run_number }}" "$DARA_APK_NAME" \
             --title "Dara APK #${{ github.run_number }}" \
             --notes "نسخه اندروید دارا، ساخته‌شده از آخرین commit شاخه main."
