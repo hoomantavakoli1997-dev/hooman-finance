@@ -41,17 +41,31 @@ interface WvJob { id: string; url: string }
 export default function App() {
   const web = useRef<WebView>(null);
   const [showBrandIntro, setShowBrandIntro] = useState(true);
-  const introScale = useRef(new Animated.Value(0.72)).current;
+  const introScale = useRef(new Animated.Value(0.78)).current;
   const introOpacity = useRef(new Animated.Value(1)).current;
   const introSpin = useRef(new Animated.Value(0)).current;
+  const introOrbit = useRef(new Animated.Value(0)).current;
+  const introPulse = useRef(new Animated.Value(1)).current;
+  const introTextY = useRef(new Animated.Value(14)).current;
   useEffect(() => {
+    const pulse = Animated.loop(Animated.sequence([
+      Animated.timing(introPulse, { toValue: 1.055, duration: 850, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(introPulse, { toValue: 1, duration: 850, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
     Animated.parallel([
-      Animated.spring(introScale, { toValue: 1, friction: 5, tension: 55, useNativeDriver: true }),
-      Animated.timing(introSpin, { toValue: 1, duration: 1500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.spring(introScale, { toValue: 1, friction: 6, tension: 48, useNativeDriver: true }),
+      Animated.timing(introSpin, { toValue: 1, duration: 2100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(introOrbit, { toValue: 1, duration: 2600, easing: Easing.linear, useNativeDriver: true }),
+      Animated.timing(introTextY, { toValue: 0, duration: 700, delay: 350, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
-    const fade = setTimeout(() => Animated.timing(introOpacity, { toValue: 0, duration: 420, useNativeDriver: true }).start(({ finished }) => { if (finished) setShowBrandIntro(false); }), 1850);
-    return () => clearTimeout(fade);
-  }, [introOpacity, introScale, introSpin]);
+    pulse.start();
+    const fade = setTimeout(() => {
+      pulse.stop();
+      Animated.timing(introOpacity, { toValue: 0, duration: 520, easing: Easing.out(Easing.quad), useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setShowBrandIntro(false); });
+    }, 2550);
+    return () => { clearTimeout(fade); pulse.stop(); };
+  }, [introOpacity, introOrbit, introPulse, introScale, introSpin, introTextY]);
   // مرورگر نامرئی برای بورس: اگر fetch بومی به سرور بورس نرسید (مثلاً به‌خاطر گواهی ناقص سرور)،
   // همان آدرس را مثل مرورگر باز می‌کنیم و متن صفحه را برمی‌داریم. درخواست‌ها یکی‌یکی انجام می‌شود.
   const [job, setJob] = useState<WvJob | null>(null);
@@ -341,17 +355,28 @@ export default function App() {
         style={{ flex: 1, backgroundColor: 'transparent' }}
       />
       {showBrandIntro && (
-        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50, elevation: 50, backgroundColor: '#0b1f3a', alignItems: 'center', justifyContent: 'center', opacity: introOpacity }}>
-          <Animated.View style={{ width: 116, height: 116, alignItems: 'center', justifyContent: 'center', transform: [{ scale: introScale }] }}>
-            <Animated.View style={{ position: 'absolute', width: 108, height: 108, borderRadius: 54, borderWidth: 2, borderColor: 'rgba(44,210,205,.72)', borderRightColor: 'rgba(44,210,205,.12)', transform: [{ rotate: introSpin.interpolate({ inputRange: [0, 1], outputRange: ['-90deg', '270deg'] }) }] }} />
-            <View style={{ width: 82, height: 82, borderRadius: 26, backgroundColor: '#123c66', borderWidth: 1, borderColor: 'rgba(111,231,224,.35)', alignItems: 'center', justifyContent: 'center', shadowColor: '#2cd2cd', shadowOpacity: 0.28, shadowRadius: 22, elevation: 12 }}>
-              <Text style={{ color: '#f2c66d', fontSize: 53, lineHeight: 65, fontWeight: '800', includeFontPadding: false }}>D</Text>
-            </View>
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50, elevation: 50, overflow: 'hidden', backgroundColor: '#081a30', alignItems: 'center', justifyContent: 'center', opacity: introOpacity }}>
+          <View style={{ position: 'absolute', width: 330, height: 330, borderRadius: 165, borderWidth: 1, borderColor: 'rgba(37,190,190,0.07)' }} />
+          <View style={{ position: 'absolute', width: 265, height: 265, borderRadius: 133, borderWidth: 1, borderColor: 'rgba(226,189,104,0.06)' }} />
+          <View style={{ position: 'absolute', width: 205, height: 205, borderRadius: 103, backgroundColor: 'rgba(18,179,176,0.035)' }} />
+          <Animated.View style={{ width: 174, height: 174, alignItems: 'center', justifyContent: 'center', transform: [{ scale: introScale }] }}>
+            <Animated.View style={{ position: 'absolute', width: 164, height: 164, borderRadius: 82, borderWidth: 1.5, borderColor: 'rgba(44,210,205,0.5)', borderRightColor: 'rgba(44,210,205,0.08)', transform: [{ rotate: introSpin.interpolate({ inputRange: [0, 1], outputRange: ['-115deg', '245deg'] }) }] }} />
+            <Animated.View style={{ position: 'absolute', width: 138, height: 138, borderRadius: 69, borderWidth: 1, borderColor: 'rgba(226,189,104,0.34)', borderLeftColor: 'rgba(226,189,104,0.05)', transform: [{ rotate: introSpin.interpolate({ inputRange: [0, 1], outputRange: ['100deg', '-260deg'] }) }] }} />
+            <Animated.View style={{ position: 'absolute', width: 174, height: 174, transform: [{ rotate: introOrbit.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }}>
+              <View style={{ position: 'absolute', top: 3, left: 81, width: 11, height: 11, borderRadius: 6, backgroundColor: '#f0c66e', shadowColor: '#f0c66e', shadowOpacity: 0.9, shadowRadius: 9, elevation: 8 }} />
+            </Animated.View>
+            <Animated.View style={{ width: 102, height: 102, borderRadius: 32, backgroundColor: '#103958', borderWidth: 1.5, borderColor: 'rgba(111,231,224,0.42)', alignItems: 'center', justifyContent: 'center', transform: [{ scale: introPulse }], shadowColor: '#16c5bd', shadowOpacity: 0.34, shadowRadius: 28, elevation: 16 }}>
+              <View style={{ position: 'absolute', top: 17, right: 18, width: 9, height: 9, borderRadius: 5, backgroundColor: '#e7bd68' }} />
+              <Text style={{ color: '#f5d78d', fontSize: 61, lineHeight: 72, fontWeight: '800', includeFontPadding: false, letterSpacing: -4 }}>D</Text>
+              <View style={{ position: 'absolute', bottom: 16, width: 34, height: 3, borderRadius: 2, backgroundColor: '#28c7bd' }} />
+            </Animated.View>
           </Animated.View>
-          <Animated.View style={{ opacity: introOpacity, alignItems: 'center', marginTop: 25 }}>
-            <Text style={{ color: '#f5f8fb', fontSize: 30, fontWeight: '800' }}>دارا</Text>
-            <Text style={{ color: '#e2bd68', fontSize: 13, fontWeight: '800', letterSpacing: 5, marginTop: 2 }}>DARA</Text>
-            <Text style={{ color: '#8edbd7', fontSize: 14, marginTop: 5 }}>همه دارایی‌هایت، یک‌جا.</Text>
+          <Animated.View style={{ opacity: introOpacity, alignItems: 'center', marginTop: 27, transform: [{ translateY: introTextY }] }}>
+            <Text style={{ color: '#f7f9fc', fontSize: 34, fontWeight: '800', letterSpacing: 0.2 }}>دارا</Text>
+            <Text style={{ color: '#e7bd68', fontSize: 12, fontWeight: '800', letterSpacing: 7, marginTop: 4 }}>D A R A</Text>
+            <View style={{ width: 38, height: 2, borderRadius: 2, backgroundColor: '#20bdb5', marginTop: 18, marginBottom: 13 }} />
+            <Text style={{ color: '#a9deda', fontSize: 14, fontWeight: '600' }}>همه دارایی‌هایت، یک‌جا.</Text>
+            <Text style={{ color: 'rgba(195,215,225,0.52)', fontSize: 10, marginTop: 36, letterSpacing: 1 }}>مدیریت هوشمند دارایی‌ها</Text>
           </Animated.View>
         </Animated.View>
       )}
