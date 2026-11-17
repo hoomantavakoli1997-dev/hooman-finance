@@ -81,6 +81,8 @@ jobs:
           sed -i '0,/defaultConfig {/s//defaultConfig {\n        ndk { abiFilters "arm64-v8a", "armeabi-v7a" }/' android/app/build.gradle
           grep -n -A1 "defaultConfig {" android/app/build.gradle | head -4
       - run: cd android && chmod +x gradlew && ./gradlew assembleRelease
+      - name: Name APK with Dara version
+        run: cp android/app/build/outputs/apk/release/*.apk "$DARA_APK_NAME"
       - uses: actions/upload-artifact@v4
         with:
           name: Dara-v${{ github.run_number }}-apk
