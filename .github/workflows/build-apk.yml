@@ -92,7 +92,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/release/*.apk hooman-finance.apk
-          gh release create "apk-${{ github.run_number }}" hooman-finance.apk \
+          gh release create "apk-${{ github.run_number }}" "$DARA_APK_NAME" \
             --title "Dara APK #${{ github.run_number }}" \
             --notes "نسخه اندروید دارا، ساخته‌شده از آخرین commit شاخه main."
