@@ -8,6 +8,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as Notifications from 'expo-notifications';
 import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
+import { checkDatabaseIntegrity, initializeDatabase, readSnapshot, writeSnapshot, type DaraSnapshot } from './src/native/sqlite';
 
 /**
  * نسخه‌ی اولیه‌ی اندروید: همان رابط و همان هسته‌ی محاسباتی (src/core) داخل WebView.
@@ -40,6 +41,26 @@ interface WvJob { id: string; url: string }
 
 export default function App() {
   const web = useRef<WebView>(null);
+  const [storageReady, setStorageReady] = useState(false);
+  const [sqliteSnapshot, setSqliteSnapshot] = useState<string | null>(null);
+  const sqliteWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        await initializeDatabase();
+        if (await checkDatabaseIntegrity()) {
+          const snapshot = await readSnapshot();
+          if (active && snapshot) setSqliteSnapshot(JSON.stringify(snapshot));
+        }
+      } catch {
+        // SQLite is a secondary mirror in this rollout; legacy WebView storage remains available.
+      } finally {
+        if (active) setStorageReady(true);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
   const [showBrandIntro, setShowBrandIntro] = useState(true);
   const introScale = useRef(new Animated.Value(0.78)).current;
   const introOpacity = useRef(new Animated.Value(1)).current;
@@ -181,10 +202,20 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; notes?: { id: string; title: string; body: string; at: number }[] };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; notes?: { id: string; title: string; body: string; at: number }[] };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
+        return;
+      }
+      if (msg.type === 'sqlite-snapshot' && typeof msg.snapshot === 'string') {
+        // Serialize writes so rapid edits cannot land in SQLite out of order.
+        sqliteWriteQueue.current = sqliteWriteQueue.current.then(async () => {
+          const snapshot = JSON.parse(msg.snapshot!) as DaraSnapshot;
+          await writeSnapshot(snapshot);
+        }).catch(() => {
+          // Keep localStorage intact; the UI must remain usable if SQLite is unavailable.
+        });
         return;
       }
       if (msg.type === 'exit') {
@@ -341,10 +372,11 @@ export default function App() {
   return (
     <View style={{ flex: 1, backgroundColor: '#0b1f3a' }}>
       <StatusBar barStyle="light-content" backgroundColor="#0b1f3a" />
+      {storageReady ? (
       <WebView
         ref={web}
         originWhitelist={['*']}
-        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; window.__DARA_SQLITE_SNAPSHOT = ${JSON.stringify(sqliteSnapshot)}; true;`}
         source={{ html: appHtml, baseUrl: 'https://hooman-finance.app/' }}
         javaScriptEnabled
         domStorageEnabled
@@ -354,6 +386,11 @@ export default function App() {
         overScrollMode="never"
         style={{ flex: 1, backgroundColor: 'transparent' }}
       />
+      ) : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b1f3a' }}>
+          <Text style={{ color: '#d7e8ef', fontSize: 14 }}>در حال آماده‌سازی اطلاعات دارا…</Text>
+        </View>
+      )}
       {showBrandIntro && (
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50, elevation: 50, overflow: 'hidden', backgroundColor: '#081a30', alignItems: 'center', justifyContent: 'center', opacity: introOpacity }}>
           <View style={{ position: 'absolute', width: 330, height: 330, borderRadius: 165, borderWidth: 1, borderColor: 'rgba(37,190,190,0.07)' }} />
