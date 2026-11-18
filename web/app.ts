@@ -123,7 +123,7 @@ function emptyStore(settings: Settings, market?: MarketSnapshot): Store {
 
 function load(): Store {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(KEY) ?? (window as unknown as { __DARA_SQLITE_SNAPSHOT?: string | null }).__DARA_SQLITE_SNAPSHOT ?? null;
     if (raw) {
       const s = JSON.parse(raw) as Store;
       if (s && s.v === 1 && Array.isArray(s.assets) && Array.isArray(s.txs) && s.settings) {
@@ -149,6 +149,9 @@ function save() {
   recordHistory();
   try {
     localStorage.setItem(KEY, JSON.stringify(store));
+    // Mirror to native SQLite while localStorage remains the authoritative source during migration.
+    const rn = (window as unknown as { ReactNativeWebView?: { postMessage(message: string): void } }).ReactNativeWebView;
+    rn?.postMessage(JSON.stringify({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) }));
   } catch {
     /* بدون ذخیره‌سازی هم برنامه کار می‌کند ولی داده پس از بستن می‌ماند */
   }
@@ -3146,6 +3149,8 @@ document.addEventListener('keydown', (ev) => {
 recordHistory();
 if (!store.sample) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
 render();
+// First-run migration / recovery mirror: keep the old localStorage copy untouched.
+toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) });
 autoCheckUpdate();
 checkPriceAlerts();
 scheduleNoteSync();
