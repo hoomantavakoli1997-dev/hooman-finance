@@ -3,7 +3,7 @@ name: Publish web app
 on:
   push:
     branches: [main]
-    paths: ['web/dist/pages/**', 'pwa/**', '.github/workflows/pages.yml']
+    paths: ['web/**', 'src/core/**', 'pwa/**', '.github/workflows/pages.yml']
   schedule:
     - cron: '7,37 * * * *'
   workflow_dispatch:
@@ -25,6 +25,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Build the web bundle from source
+        run: |
+          npm install
+          npm run web:build
       - name: Assemble site
         run: |
           mkdir _site

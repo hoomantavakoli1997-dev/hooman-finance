@@ -17,10 +17,6 @@ jobs:
         run: npm test
       - name: Build web bundle
         run: npm run web:build
-      - name: The committed bundle must match the source
-        run: |
-          git diff --exit-code -- web/dist src/native/appHtml.ts || {
-            echo "web/dist is out of date. Run 'npm run web:build' and commit the result."; exit 1; }
       - name: Interface tests (browser)
         run: |
           npm install --no-save playwright@1.49.1
