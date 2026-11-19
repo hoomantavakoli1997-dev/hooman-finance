@@ -121,39 +121,79 @@ function emptyStore(settings: Settings, market?: MarketSnapshot): Store {
   return { v: 1, sample: false, market: market ?? bundledMarket(), assets: DEFAULT_ASSETS.map((a) => ({ ...a })), txs: [], prices: {}, people: [], debts: [], payments: [], cheques: [], settings };
 }
 
-function load(): Store {
+/** یک متن ذخیره‌شده را بررسی و کامل می‌کند؛ اگر معتبر نباشد null */
+function parseStore(raw: string | null | undefined): Store | null {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(KEY) ?? (window as unknown as { __DARA_SQLITE_SNAPSHOT?: string | null }).__DARA_SQLITE_SNAPSHOT ?? null;
-    if (raw) {
-      const s = JSON.parse(raw) as Store;
-      if (s && s.v === 1 && Array.isArray(s.assets) && Array.isArray(s.txs) && s.settings) {
-        if (!s.market || !Array.isArray(s.market.entries)) s.market = bundledMarket();
-        if (!Array.isArray(s.people)) s.people = [];
-        if (!Array.isArray(s.debts)) s.debts = [];
-        if (!Array.isArray(s.payments)) s.payments = [];
-        if (!Array.isArray(s.history)) s.history = [];
-        if (!Array.isArray(s.reminders)) s.reminders = [];
-        if (!Array.isArray(s.cheques)) s.cheques = [];
-        return s;
-      }
+    const s = JSON.parse(raw) as Store;
+    if (!s || s.v !== 1 || !Array.isArray(s.assets) || !Array.isArray(s.txs) || !s.settings || typeof s.settings !== 'object') return null;
+    if (!s.market || !Array.isArray(s.market.entries)) s.market = bundledMarket();
+    if (!s.prices || typeof s.prices !== 'object') s.prices = {};
+    for (const k of ['people', 'debts', 'payments', 'history', 'reminders', 'cheques'] as const) {
+      if (!Array.isArray(s[k])) (s as unknown as Record<string, unknown[]>)[k] = [];
     }
+    return s;
   } catch {
-    /* ذخیره‌سازی در دسترس نیست؛ شروع خالی و بدون داده‌ی ساختگی */
+    return null;
+  }
+}
+
+/**
+ * وضعیت بارگذاری: اگر داده‌ی ذخیره‌شده وجود داشته ولی خوانده نشد، تا تصمیم کاربر هیچ‌چیز
+ * بازنویسی نمی‌شود (نه حافظه‌ی مرورگر و نه آینه‌ی SQLite) تا داده‌ی قابل‌نجات از بین نرود.
+ */
+let writesBlocked = false;
+let recoverMirror: Store | null = null;
+let recoveredFromMirror = false;
+const CORRUPT_PREFIX = 'hooman-finance-corrupt-';
+
+function load(): Store {
+  const mirrorRaw = (window as unknown as { __DARA_SQLITE_SNAPSHOT?: string | null }).__DARA_SQLITE_SNAPSHOT ?? null;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(KEY);
+  } catch {
+    /* حافظه‌ی مرورگر در دسترس نیست */
+  }
+  if (raw) {
+    const s = parseStore(raw);
+    if (s) return s;
+    // داده هست ولی خراب است: یک کپی کنار می‌گذاریم و هیچ‌چیز را بازنویسی نمی‌کنیم
+    try { localStorage.setItem(CORRUPT_PREFIX + Date.now(), raw); } catch { /* ignore */ }
+    recoverMirror = parseStore(mirrorRaw);
+    writesBlocked = true;
+    return emptyStore({ unit: 'toman', theme: 'system', font: 'normal' });
+  }
+  const fromMirror = parseStore(mirrorRaw);
+  if (fromMirror) {
+    recoveredFromMirror = true;
+    return fromMirror;
   }
   // New installations start empty: never present seeded demo transactions as real finances.
   return emptyStore({ unit: 'toman', theme: 'system', font: 'normal' });
 }
 
 let store: Store = load();
-function save() {
-  recordHistory();
+let lastSaveWarn = 0;
+function persist(): boolean {
+  if (writesBlocked) return false;
   try {
     localStorage.setItem(KEY, JSON.stringify(store));
+    return true;
+  } catch {
+    if (Date.now() - lastSaveWarn > 60_000) {
+      lastSaveWarn = Date.now();
+      window.setTimeout(() => toast('ذخیره‌ی اطلاعات انجام نشد. فضای گوشی را بررسی کنید و همین حالا پشتیبان بگیرید.'), 0);
+    }
+    return false;
+  }
+}
+function save() {
+  recordHistory();
+  if (persist()) {
     // Mirror to native SQLite while localStorage remains the authoritative source during migration.
     const rn = (window as unknown as { ReactNativeWebView?: { postMessage(message: string): void } }).ReactNativeWebView;
     rn?.postMessage(JSON.stringify({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) }));
-  } catch {
-    /* بدون ذخیره‌سازی هم برنامه کار می‌کند ولی داده پس از بستن می‌ماند */
   }
   scheduleNoteSync();
 }
@@ -1316,6 +1356,7 @@ function restoreApply() {
   if (keepLock) store.settings.lock = keepLock;
   else delete store.settings.lock;
   view.assetId = null;
+  writesBlocked = false;
   save();
   closeModal();
   render();
@@ -1913,6 +1954,7 @@ type Modal =
   | { kind: 'paste'; f: { text: string; error: string } }
   | { kind: 'prices'; results: PriceResult[]; errors: { provider: string; message: string }[] }
   | { kind: 'ask'; what: 'reset' | 'clear' }
+  | { kind: 'recover' }
   | { kind: 'lock'; f: { mode: 'enable' | 'change' | 'disable'; kind: LockKind; stage: 'cur' | 'new' | 'confirm'; first: string; curOk: boolean; cur: string; pin: string; pin2: string; error: string; busy: boolean } }
   | { kind: 'rem'; f: RemForm }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
@@ -1924,6 +1966,11 @@ function closeModal() {
   modal = null;
   pendingTx = null;
   modalEl.innerHTML = '';
+  // تا وقتی تصمیم بازیابی گرفته نشده، پنجره‌ی بازیابی بسته نمی‌ماند
+  if (writesBlocked) {
+    modal = { kind: 'recover' };
+    renderModal();
+  }
 }
 
 function sheet(inner: string): string {
@@ -2133,6 +2180,16 @@ function confirmHtml(f: TxForm): string {
 function renderModal() {
   if (!modal) {
     modalEl.innerHTML = '';
+    return;
+  }
+  if (modal.kind === 'recover') {
+    modalEl.innerHTML = sheet(`<h2>اطلاعات ذخیره‌شده خوانده نشد</h2>
+      <div class="note"><span>داده‌ی قبلی خراب است. یک کپی از آن کنار گذاشته شد و تا تصمیم شما هیچ‌چیز پاک یا بازنویسی نمی‌شود.</span></div>
+      <div class="actions">
+        ${recoverMirror ? '<button class="btn" data-action="recover-mirror">بازیابی از نسخه‌ی خودکار گوشی</button>' : ''}
+        <button class="btn" data-action="recover-file">بازیابی از فایل پشتیبان</button>
+        <button class="btn ghost bad" data-action="recover-empty">شروع با اطلاعات خالی</button>
+      </div><input type="file" id="restore-file" hidden>`);
     return;
   }
   if (modal.kind === 'tx') {
@@ -2679,6 +2736,29 @@ document.addEventListener('click', (ev) => {
     case 'stock-test':
       if (modal?.kind === 'asset') void stockPreview(modal.f);
       break;
+    case 'recover-mirror':
+      if (recoverMirror) {
+        store = recoverMirror;
+        recoverMirror = null;
+        writesBlocked = false;
+        modal = null;
+        save();
+        closeModal();
+        render();
+        toast('اطلاعات از نسخه‌ی خودکار گوشی بازیابی شد.');
+      }
+      break;
+    case 'recover-file':
+      (document.getElementById('restore-file') as HTMLInputElement | null)?.click();
+      break;
+    case 'recover-empty':
+      writesBlocked = false;
+      modal = null;
+      save();
+      closeModal();
+      render();
+      toast('با اطلاعات خالی شروع شد. کپی داده‌ی قبلی در گوشی نگه‌داری می‌شود.');
+      break;
     case 'rem-open':
       openReminders();
       break;
@@ -3065,7 +3145,7 @@ async function runRefresh(silent = false) {
 }
 
 function setErr(msg: string) {
-  if (modal && modal.kind !== 'ask' && modal.kind !== 'prices' && modal.kind !== 'quote') (modal.f as { error: string }).error = msg;
+  if (modal && modal.kind !== 'recover' && modal.kind !== 'ask' && modal.kind !== 'prices' && modal.kind !== 'quote') (modal.f as { error: string }).error = msg;
   const el = document.getElementById('ferr');
   if (el) el.textContent = msg;
 }
@@ -3088,7 +3168,7 @@ document.addEventListener('input', (ev) => {
     return;
   }
   const field = t.dataset?.field;
-  if (!field || !modal || modal.kind === 'ask' || modal.kind === 'prices' || modal.kind === 'quote') return;
+  if (!field || !modal || modal.kind === 'recover' || modal.kind === 'ask' || modal.kind === 'prices' || modal.kind === 'quote') return;
   if (t.type === 'checkbox') {
     (modal.f as unknown as Record<string, boolean>)[field] = t.checked;
     if (field === 'plan') renderModal();
@@ -3146,11 +3226,13 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && modal) closeModal();
 });
 
-recordHistory();
-if (!store.sample) { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ } }
+if (!writesBlocked) recordHistory();
+if (!store.sample) persist();
 render();
 // First-run migration / recovery mirror: keep the old localStorage copy untouched.
-toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) });
+if (!writesBlocked) toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) });
+if (writesBlocked) { modal = { kind: 'recover' }; renderModal(); }
+else if (recoveredFromMirror) window.setTimeout(() => toast('اطلاعات از نسخه‌ی پشتیبان خودکار گوشی بازیابی شد.'), 300);
 autoCheckUpdate();
 checkPriceAlerts();
 scheduleNoteSync();
