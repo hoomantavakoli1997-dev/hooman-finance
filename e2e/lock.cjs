@@ -1,0 +1,46 @@
+// قفل برنامه: رمز، الگو، قفل‌شدن بعد از اشتباه، فراموشی
+const { openApp, reporter } = require('./helpers.cjs');
+(async () => {
+  const t = reporter('lock');
+  const app = await openApp();
+  const p = app.page;
+  const visible = () => p.evaluate(() => !document.getElementById('lock').hidden);
+  const type = async (d) => { for (const c of d) await p.click(`#lock [data-action="lk-digit"][data-v="${c}"]`); };
+  await app.tab('settings');
+  t.ok(await p.locator('[data-action="lock-open"][data-v="enable"]').count() === 1, 'قفل در ابتدا خاموش است');
+  await p.click('[data-action="lock-open"][data-v="enable"]');
+  await p.fill('#lc-pin', '12'); await p.fill('#lc-pin2', '12'); await p.click('[data-action="lock-save"]');
+  t.ok((await p.locator('#ferr').innerText()).length > 0, 'رمز کوتاه رد می‌شود');
+  await p.fill('#lc-pin', '1234'); await p.fill('#lc-pin2', '1235'); await p.click('[data-action="lock-save"]');
+  t.ok((await p.locator('#ferr').innerText()).length > 0, 'تکرار نامطابق رد می‌شود');
+  await p.fill('#lc-pin2', '1234'); await p.click('[data-action="lock-save"]');
+  await p.waitForSelector('[data-action="set-autolock"]');
+  const raw = JSON.stringify(await app.store());
+  t.ok(!raw.includes('"1234"') && !raw.includes('۱۲۳۴'), 'رمز به‌صورت متن ساده ذخیره نمی‌شود');
+  await p.reload();
+  t.ok(await visible(), 'بعد از بازشدن قفل است');
+  await type('0000'); await p.waitForTimeout(400);
+  t.ok(await visible(), 'رمز اشتباه باز نمی‌کند');
+  await type('1234'); await p.waitForTimeout(500);
+  t.ok(!(await visible()), 'رمز درست باز می‌کند');
+  await p.evaluate(() => window.__appState('background'));
+  t.ok(await visible(), 'در پس‌زمینه روی صفحه پوشش می‌آید');
+  await p.evaluate(() => window.__appState('active'));
+  t.ok(!(await visible()), 'بازگشت سریع بدون رمز');
+  await app.tab('settings');
+  await p.click('[data-action="set-autolock"][data-v="0"]');
+  await p.evaluate(() => window.__appState('background')); await p.waitForTimeout(30);
+  await p.evaluate(() => window.__appState('active'));
+  t.ok(await visible() && await p.locator('#lock .lk-pad').count() === 1, 'قفل خودکار فوری، صفحه‌کلید می‌خواهد');
+  for (let i = 0; i < 5; i++) { await type('1111'); await p.waitForTimeout(350); }
+  t.ok(await p.locator('#lock [data-action="lk-digit"]:disabled').count() > 0, 'بعد از چند اشتباه کلیدها موقتاً قفل می‌شوند');
+  await p.evaluate(() => localStorage.removeItem('hooman-finance-lockfail')); await p.reload();
+  await type('1234'); await p.waitForTimeout(500);
+  t.ok(!(await visible()), 'بعد از پایان مهلت، رمز درست باز می‌کند');
+  await p.reload(); await p.click('[data-action="lk-forgot"]');
+  await p.click('[data-action="lk-forgot-yes"]'); await p.waitForTimeout(500);
+  t.ok(!(await visible()) && !(await app.store()).settings.lock, 'فراموشی: قفل برداشته می‌شود');
+  t.ok(app.errors.length === 0, 'بدون خطای اسکریپت ' + app.errors.join('|'));
+  await app.close();
+  process.exit(t.done() ? 1 : 0);
+})();

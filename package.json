@@ -8,6 +8,7 @@
     "android": "expo start --android",
     "test": "tsx --test src/core/*.test.ts",
     "web:build": "node web/build.mjs",
+    "e2e": "node e2e/run.cjs",
     "apk": "npm run web:build && npx expo prebuild --platform android --no-install && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {

@@ -1,0 +1,28 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - name: Core unit tests
+        run: npm test
+      - name: Build web bundle
+        run: npm run web:build
+      - name: The committed bundle must match the source
+        run: |
+          git diff --exit-code -- web/dist src/native/appHtml.ts || {
+            echo "web/dist is out of date. Run 'npm run web:build' and commit the result."; exit 1; }
+      - name: Interface tests (browser)
+        run: |
+          npm install --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+          TZ=Asia/Tehran npm run e2e
