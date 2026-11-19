@@ -2,7 +2,7 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
 let bad = 0;
-for (const f of ['storage-recovery', 'lock', 'reminders']) {
+for (const f of ['storage-recovery', 'lock', 'reminders', 'cheques']) {
   const r = spawnSync(process.execPath, [path.join(__dirname, f + '.cjs')], { stdio: 'inherit' });
   if (r.status !== 0) { bad++; console.log(`>>> ${f} ناموفق`); }
 }

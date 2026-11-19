@@ -6,7 +6,7 @@ import {
   ChangeResult, Portfolio, TxDraft, parseDec,
 } from '../src/core/engine';
 import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
-import { Cheque, CheckDirection, CheckStatus, chequeDue, sortCheques, validateCheque } from '../src/core/checks';
+import { Cheque, CheckDirection, CheckStatus, chequeCashDraft, chequeDue, chequeTotals, duplicateCheque, sortCheques, validateCheque } from '../src/core/checks';
 import { assetIcon, iconKind, iconSvg, marketIcon } from './icons';
 import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
 import { DEFAULT_PRICE_KEYS, PriceResult, TGJU_URL, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
@@ -390,6 +390,13 @@ function sparkHtml(): string {
 }
 
 /** تب «دارایی‌ها»: یک فهرست واحد با سهم هر مورد از کل سرمایه (بدون تکرار) */
+/** طلب و بدهی اشخاص + چک‌های باز؛ برای سرمایه‌ی خالص */
+function peopleWithCheques() {
+  const ppl = computePeople(peopleData(), todayIso());
+  const ck = chequeTotals(store.cheques ?? []);
+  return { ...ppl, receivable: ppl.receivable.plus(ck.receivable), payable: ppl.payable.plus(ck.payable) };
+}
+
 function assetsOverview(pf: Portfolio, ppl: { receivable: Decimal; payable: Decimal }): string {
   interface Row { key: string; label: string; value: Decimal | null; icon: string; sub: string; extra: string; open?: string }
   const rows: Row[] = [{ key: 'cash', label: 'وجه نقد', value: pf.cash, icon: `<span class="ico sm">${iconSvg({ t: 'cash' })}</span>`, sub: 'جدا از دارایی‌ها', extra: '' }];
@@ -402,7 +409,7 @@ function assetsOverview(pf: Portfolio, ppl: { receivable: Decimal; payable: Deci
       open: a.asset.id,
     });
   }
-  if (ppl.receivable.gt(0)) rows.push({ key: 'recv', label: 'طلب از اشخاص', value: ppl.receivable, icon: `<span class="ico sm">${iconSvg({ t: 'people' })}</span>`, sub: 'اشخاص', extra: '' });
+  if (ppl.receivable.gt(0)) rows.push({ key: 'recv', label: 'طلب‌ها', value: ppl.receivable, icon: `<span class="ico sm">${iconSvg({ t: 'people' })}</span>`, sub: 'اشخاص و چک‌ها', extra: '' });
   const total = rows.reduce((t, r) => (r.value && r.value.gt(0) ? t.plus(r.value) : t), Decimal.ZERO);
   // رنگ بر اساس هویت (ترتیب ثابت)، نه رتبه
   const order = ['cash', ...store.assets.map((a) => a.id), 'recv'];
@@ -509,7 +516,7 @@ async function runStockSearch(f: AssetForm) {
 
 function viewHome(pf: Portfolio): string {
   const assetsValue = pf.assets.reduce((s, a) => (a.value ? s.plus(a.value) : s), Decimal.ZERO);
-  const ppl = computePeople(peopleData(), todayIso());
+  const ppl = peopleWithCheques();
   const worth = netWorth(pf.cash, assetsValue, ppl);
   const missing = pf.missingPrice.map((id) => esc(assetName(id)));
 
@@ -519,7 +526,7 @@ function viewHome(pf: Portfolio): string {
       <div class="between"><span class="label">سرمایه‌ی خالص</span>
         <button class="eye" data-action="toggle-hide" aria-pressed="${hidden()}" aria-label="${hidden() ? 'نمایش مبلغ‌ها' : 'پنهان کردن مبلغ‌ها'}">${hidden() ? EYE_OFF : EYE_ON}</button></div>
       <div class="big">${hidden() ? MASK : ltr(fmtNum(fromRial(worth)))}<span class="u">${unitLabel()}</span></div>
-      <div class="mini"><span>نقد <b>${money(pf.cash, false)}</b></span><span>دارایی‌ها <b>${money(assetsValue, false)}</b></span><span>طلب‌ها <b>${money(ppl.receivable, false)}</b></span><span>بدهی‌ها <b>${money(ppl.payable, false)}</b></span></div>
+      <div class="mini"><span>نقد <b>${money(pf.cash, false)}</b></span><span>دارایی‌ها <b>${money(assetsValue, false)}</b></span><span>طلب‌ها و چک <b>${money(ppl.receivable, false)}</b></span><span>بدهی‌ها و چک <b>${money(ppl.payable, false)}</b></span></div>
       ${sparkHtml()}
     </section>
     ${
@@ -675,7 +682,7 @@ function viewMarket(): string {
 /* ------------------------------ دارایی‌ها ------------------------------ */
 
 function viewAssets(pf: Portfolio): string {
-  const ppl = computePeople(peopleData(), todayIso());
+  const ppl = peopleWithCheques();
   return `${header('دارایی‌ها')}
     <h2 class="section-title"><span>سهم هر دارایی از سرمایه</span></h2>
     ${assetsOverview(pf, ppl)}
@@ -806,7 +813,7 @@ function recordHistory() {
     const pf0 = computePortfolio(store.assets, store.txs, store.prices);
     const cash = pf0.cash;
     const assetsValue = pf0.assets.reduce((sum, a) => a.value ? sum.plus(a.value) : sum, Decimal.ZERO);
-    const worth = netWorth(cash, assetsValue, computePeople(peopleData(), todayIso()));
+    const worth = netWorth(cash, assetsValue, peopleWithCheques());
     if (worth.isNegative()) return;
     const point: HistoryPoint = { at: new Date().toISOString(), value: worth.toString() };
     const history = store.history ?? (store.history = []);
@@ -881,13 +888,47 @@ function saveCheque() {
   if (!validation.valid) return setErr(validation.error ?? 'اطلاعات چک معتبر نیست.');
   const now = new Date().toISOString();
   const previous = f.id ? (store.cheques ?? []).find(x=>x.id===f.id) : undefined;
-  if (previous?.reminderId) store.reminders = remList().filter(r=>r.id!==previous.reminderId);
-  const reminderId = (data.status==='pending' || data.status==='deposited' || data.status==='bounced') ? nid('r') : undefined;
-  const item: Cheque = { ...data, id:f.id ?? nid('ck'), reminderId,
+  if (duplicateCheque(store.cheques ?? [], data, previous?.id)) return setErr('این چک (همین شماره، بانک و نوع) قبلاً ثبت شده است.');
+  // موجودی نقد: «وصول‌شده» مبلغ را به نقد اضافه یا از آن کم می‌کند
+  let txs = store.txs;
+  let cashTxId = previous?.cashTxId;
+  let negCash = false;
+  const wasCleared = previous?.status === 'cleared' && !!cashTxId;
+  const probe = { ...data, id: previous?.id ?? 'new', createdAt: now, updatedAt: now } as Cheque;
+  if (data.status === 'cleared') {
+    if (wasCleared && cashTxId) {
+      if (previous && previous.amount !== data.amount) {
+        const r = updateTx(txs, cashTxId, { quantity: data.amount });
+        if (!r.ok) return setErr('تغییر مبلغ چک ممکن نیست.');
+        negCash = r.issues.some((i) => i.code === 'NEGATIVE_CASH');
+        txs = r.txs;
+      }
+    } else {
+      const r = addTx(txs, chequeCashDraft(probe, todayIso()));
+      if (!r.ok) return setErr('ثبت وصول چک در نقد انجام نشد.');
+      negCash = r.issues.some((i) => i.code === 'NEGATIVE_CASH');
+      txs = r.txs;
+      cashTxId = r.txs[r.txs.length - 1].id;
+    }
+  } else if (wasCleared && cashTxId) {
+    const r = deleteTx(txs, cashTxId, now);
+    if (!r.ok) return setErr('برگرداندن وضعیت چک ممکن نیست.');
+    negCash = r.issues.some((i) => i.code === 'NEGATIVE_CASH');
+    txs = r.txs;
+    cashTxId = undefined;
+  }
+  // یادآور: اگر کاربر قبلاً «انجام شد» زده و سررسید عوض نشده، همان نگه داشته می‌شود
+  const open = data.status==='pending' || data.status==='deposited' || data.status==='bounced';
+  const oldRem = previous?.reminderId ? remList().find(r=>r.id===previous.reminderId) : undefined;
+  const keepRem = !!(open && oldRem && oldRem.kind==='date' && oldRem.date===data.dueDate);
+  if (previous?.reminderId && !keepRem) store.reminders = remList().filter(r=>r.id!==previous.reminderId);
+  const reminderId = keepRem ? previous!.reminderId : open ? nid('r') : undefined;
+  const item: Cheque = { ...data, id:f.id ?? nid('ck'), reminderId, ...(cashTxId ? { cashTxId } : {}),
     createdAt:previous?.createdAt ?? now, updatedAt:now };
+  store.txs = txs;
   store.cheques = f.mode==='edit' ? (store.cheques ?? []).map(x=>x.id===item.id?item:x) : [...(store.cheques ?? []),item];
-  if (reminderId) remList().push({ id:reminderId, kind:'date', title:`سررسید چک ${item.direction==='received'?'دریافتی':'پرداختی'} · ${item.bank}`, date:item.dueDate, leadDays:1, note:`شماره چک: ${item.number}` });
-  save(); closeModal(); render(); toast(f.mode==='edit'?'چک ویرایش شد.':'چک ثبت شد.');
+  if (reminderId && !keepRem) remList().push({ id:reminderId, kind:'date', title:`سررسید چک ${item.direction==='received'?'دریافتی':'پرداختی'} · ${item.bank}`, date:item.dueDate, leadDays:1, note:`شماره چک: ${item.number}` });
+  save(); closeModal(); render(); toast((f.mode==='edit'?'چک ویرایش شد.':'چک ثبت شد.') + (negCash ? ' هشدار: موجودی نقد منفی شد؛ واریز یا موجودی اولیه را ثبت کنید.' : ''));
 }
 function chequeListHtml(): string {
   const items = sortCheques(store.cheques ?? []);
@@ -927,7 +968,7 @@ function viewPeople(): string {
       <div class="tile"><span class="k">جمع بدهی‌های شما</span><span class="v loss">${money(sum.payable)}</span></div>
     </div>
     <h2 class="section-title">چک‌ها</h2>
-    <div class="grid2"><div class="tile"><span class="k">چک‌های دریافتی باز</span><span class="v">${toFa(String(incoming))} فقره</span></div><div class="tile"><span class="k">چک‌های پرداختی باز</span><span class="v">${toFa(String(outgoing))} فقره</span></div></div>
+    <div class="grid2"><div class="tile"><span class="k">چک‌های دریافتی باز</span><span class="v">${toFa(String(incoming))} فقره · ${money(chequeTotals(chequeItems).receivable)}</span></div><div class="tile"><span class="k">چک‌های پرداختی باز</span><span class="v">${toFa(String(outgoing))} فقره · ${money(chequeTotals(chequeItems).payable)}</span></div></div>
     <div class="actions"><button class="btn" data-action="check-new" data-v="received">ثبت چک دریافتی</button><button class="btn ghost" data-action="check-new" data-v="issued">ثبت چک پرداختی</button></div>
     ${chequeListHtml()}
     <h2 class="section-title">طلب‌ها و بدهی‌ها</h2>
@@ -936,7 +977,7 @@ function viewPeople(): string {
       <button class="btn" data-action="new-debt" data-v="borrowed">وام یا قرض گرفتم</button>
     </div>
     <div class="list">${rows || '<div class="empty">هنوز شخصی یا وامی ثبت نشده است.<br>مثلاً «به هومن ۱۰ میلیون قرض دادم» یا «وام بانک ۱۵ میلیون گرفتم».</div>'}</div>
-    <div class="note info"><span>طلب‌ها و بدهی‌ها در «سرمایه‌ی خالص» صفحه‌ی خانه حساب می‌شوند: نقد + دارایی‌ها + طلب‌ها − بدهی‌ها.</span></div>`;
+    <div class="note info"><span>طلب‌ها، بدهی‌ها و چک‌های باز در «سرمایه‌ی خالص» صفحه‌ی خانه حساب می‌شوند: نقد + دارایی‌ها + طلب‌ها − بدهی‌ها. چک دریافتیِ برگشتی قابل‌وصول حساب نمی‌شود. با «وصول‌شده» کردن چک، مبلغ در نقد واریز یا برداشت می‌شود.</span></div>`;
 }
 
 function debtCard(ds: DebtState): string {
@@ -2869,7 +2910,9 @@ document.addEventListener('click', (ev) => {
     }
     case 'check-save': saveCheque(); break;
     case 'check-del': {
-      const removed=(store.cheques ?? []).find(x=>x.id===v); if(removed?.reminderId) store.reminders=remList().filter(r=>r.id!==removed.reminderId);
+      const removed=(store.cheques ?? []).find(x=>x.id===v);
+      if(removed?.cashTxId){ const r=deleteTx(store.txs,removed.cashTxId,new Date().toISOString()); if(!r.ok){ toast('حذف چک ممکن نشد.'); break; } store.txs=r.txs; if(r.issues.some(i=>i.code==='NEGATIVE_CASH')) toast('هشدار: با حذف این چک موجودی نقد منفی شد.'); }
+      if(removed?.reminderId) store.reminders=remList().filter(r=>r.id!==removed.reminderId);
       store.cheques=(store.cheques ?? []).filter(x=>x.id!==v); save(); render(); toast('چک حذف شد.'); break;
     }
     case 'check-dir':

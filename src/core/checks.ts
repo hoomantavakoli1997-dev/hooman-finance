@@ -1,4 +1,6 @@
 import { Decimal } from './decimal';
+import { CASH_ID } from './types';
+import type { TxDraft } from './engine';
 
 export type CheckDirection = 'received' | 'issued';
 export type CheckStatus = 'pending' | 'deposited' | 'cleared' | 'bounced' | 'cancelled';
@@ -15,6 +17,8 @@ export interface Cheque {
   status: CheckStatus;
   note?: string;
   reminderId?: string;
+  /** معامله‌ی نقدی که با «وصول‌شده» ساخته شده است */
+  cashTxId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,4 +63,38 @@ export function sortCheques(items: Cheque[]): Cheque[] {
     const status = rank[a.status] - rank[b.status];
     return status || a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt);
   });
+}
+
+/**
+ * طلب و بدهی ناشی از چک‌های باز (برای سرمایه‌ی خالص):
+ * چک دریافتیِ برگشتی قابل‌وصول حساب نمی‌شود؛ چک پرداختیِ برگشتی همچنان بدهی است.
+ */
+export function chequeTotals(list: Cheque[]): { receivable: Decimal; payable: Decimal } {
+  let receivable = Decimal.ZERO;
+  let payable = Decimal.ZERO;
+  for (const c of list) {
+    const amount = Decimal.parse(c.amount);
+    if (c.direction === 'received' && (c.status === 'pending' || c.status === 'deposited')) receivable = receivable.plus(amount);
+    if (c.direction === 'issued' && chequeOutstanding(c)) payable = payable.plus(amount);
+  }
+  return { receivable, payable };
+}
+
+/** معامله‌ی نقدی هنگام وصول چک: دریافتی ← واریز، پرداختی ← برداشت (به ریال) */
+export function chequeCashDraft(c: Cheque, date: string): TxDraft {
+  return {
+    assetId: CASH_ID,
+    type: c.direction === 'received' ? 'deposit' : 'withdraw',
+    date,
+    quantity: c.amount,
+    unitPrice: '1',
+    fee: '0',
+    note: `وصول چک ${c.number}`,
+  };
+}
+
+/** آیا چک مشابهی (همان شماره، بانک و نوع) قبلاً ثبت شده است؟ */
+export function duplicateCheque(list: Cheque[], c: Pick<Cheque, 'number' | 'bank' | 'direction'>, exceptId?: string): boolean {
+  const norm = (x: string) => x.replace(/\s+/g, '').toLowerCase();
+  return list.some((o) => o.id !== exceptId && o.status !== 'cancelled' && o.direction === c.direction && norm(o.number) === norm(c.number) && norm(o.bank) === norm(c.bank));
 }
