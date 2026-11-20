@@ -13,7 +13,8 @@
         "REQUEST_INSTALL_PACKAGES",
         "POST_NOTIFICATIONS"
       ],
-      "backgroundColor": "#0b1f3a"
+      "backgroundColor": "#0b1f3a",
+      "allowBackup": false
     },
     "plugins": [
       [
@@ -21,7 +22,8 @@
         {
           "color": "#18b6b0"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "backgroundColor": "#0b1f3a",
     "splash": {

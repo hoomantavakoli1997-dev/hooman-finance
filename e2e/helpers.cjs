@@ -22,7 +22,18 @@ async function openApp(init = {}) {
   await page.addInitScript(({ init, KEY }) => {
     window.__sent = [];
     window.__APP_BUILD = 1;
-    window.ReactNativeWebView = { postMessage: (m) => window.__sent.push(JSON.parse(m)) };
+    window.ReactNativeWebView = {
+      postMessage: (m) => {
+        const msg = JSON.parse(m);
+        window.__sent.push(msg);
+        // شبیه‌ساز بخش بومی: ذخیره‌ی رمزشده را تأیید می‌کند
+        if (init.ack && msg.type === 'sqlite-snapshot' && typeof msg.ack === 'number') {
+          window.__lastSnap = msg.snapshot;
+          setTimeout(() => window.__encAck && window.__encAck(msg.ack, true), 20);
+        }
+      },
+    };
+    if (init.key) window.__DARA_KEY = init.key;
     if (!sessionStorage.getItem('__seeded')) {
       sessionStorage.setItem('__seeded', '1');
       if (init.local !== undefined) localStorage.setItem(KEY, init.local);

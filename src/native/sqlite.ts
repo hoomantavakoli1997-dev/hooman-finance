@@ -25,9 +25,19 @@ export interface DaraSnapshot {
   [key: string]: unknown;
 }
 
+/** پاکت رمزشده‌ی اطلاعات (AES-GCM)؛ ساختار داخلی آن را فقط صفحه می‌بیند */
+export interface EncryptedEnvelope { enc: 1; iv: string; data: string }
+
+function isEnvelope(value: unknown): value is EncryptedEnvelope {
+  if (!value || typeof value !== 'object') return false;
+  const e = value as Record<string, unknown>;
+  return e.enc === 1 && typeof e.iv === 'string' && typeof e.data === 'string';
+}
+
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 function isSnapshot(value: unknown): value is DaraSnapshot {
+  if (isEnvelope(value)) return true;
   if (!value || typeof value !== 'object') return false;
   const state = value as Record<string, unknown>;
   return state.v === 1 &&
@@ -73,7 +83,7 @@ async function db(): Promise<SQLite.SQLiteDatabase> {
 }
 
 /** Returns null only when no SQLite snapshot exists yet. */
-export async function readSnapshot(): Promise<DaraSnapshot | null> {
+export async function readSnapshot(): Promise<DaraSnapshot | EncryptedEnvelope | null> {
   const connection = await db();
   const row = await connection.getFirstAsync<{ payload: string; schema_version: number }>(
     'SELECT payload, schema_version FROM dara_state WHERE id = ?',
@@ -92,7 +102,7 @@ export async function readSnapshot(): Promise<DaraSnapshot | null> {
   if (!isSnapshot(parsed)) {
     throw new Error('ساختار اطلاعات ذخیره‌شده معتبر نیست؛ داده‌ها بازنویسی نشدند.');
   }
-  return parsed;
+  return parsed as DaraSnapshot | EncryptedEnvelope;
 }
 
 /**
@@ -123,7 +133,7 @@ export async function importLegacySnapshot(legacyJson: string): Promise<boolean>
 }
 
 /** Atomic single-row replacement; a failed write leaves the prior snapshot intact. */
-export async function writeSnapshot(snapshot: DaraSnapshot): Promise<void> {
+export async function writeSnapshot(snapshot: DaraSnapshot | EncryptedEnvelope): Promise<void> {
   if (!isSnapshot(snapshot)) throw new Error('ساختار اطلاعات برای ذخیره‌سازی معتبر نیست.');
   const payload = JSON.stringify(snapshot);
   if (payload.length > MAX_SNAPSHOT_CHARS) throw new Error('حجم اطلاعات بیش از حد مجاز است.');

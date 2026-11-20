@@ -13,6 +13,7 @@ import { DEFAULT_PRICE_KEYS, PriceResult, TGJU_URL, applyQuotes, parseTgju, refr
 import {
   CATEGORIES, CategoryId, MarketEntry, classify, isStale, parseMarket, searchMarket, snapshotTime,
 } from '../src/core/market';
+import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import sampleRaw from './market-sample.json';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
@@ -147,13 +148,34 @@ let recoverMirror: Store | null = null;
 let recoveredFromMirror = false;
 const CORRUPT_PREFIX = 'hooman-finance-corrupt-';
 
+/**
+ * رمزنگاری روی گوشی: فقط وقتی بخش بومی کلید را داده باشد (نسخه‌ی اندروید) فعال است.
+ * در این حالت اطلاعات به‌شکل پاکت رمزشده در پایگاه داده‌ی گوشی نگه‌داری می‌شود و متن ساده‌ای در
+ * حافظه‌ی مرورگر باقی نمی‌ماند. نسخه‌ی وب (PWA) مثل قبل از حافظه‌ی مرورگر استفاده می‌کند.
+ */
+const injected = window as unknown as { __DARA_KEY?: string | null; __DARA_SQLITE_SNAPSHOT?: string | null };
+const keyHex: string | null = validKeyHex(injected.__DARA_KEY) && secureAvailable() ? injected.__DARA_KEY : null;
+let secureMode = !!keyHex;
+let secureKey: CryptoKey | null = null;
+let pendingEnvelope: Envelope | null = null;
+/** متن سادهٔ قدیمی هنوز در حافظه‌ی مرورگر است و باید بعد از تأیید ذخیره‌ی رمزشده پاک شود */
+let plainPending = false;
+
 function load(): Store {
-  const mirrorRaw = (window as unknown as { __DARA_SQLITE_SNAPSHOT?: string | null }).__DARA_SQLITE_SNAPSHOT ?? null;
+  const mirrorRaw = injected.__DARA_SQLITE_SNAPSHOT ?? null;
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(KEY);
   } catch {
     /* حافظه‌ی مرورگر در دسترس نیست */
+  }
+  const env = parseEnvelope(mirrorRaw);
+  if (env) {
+    // نسخه‌ی رمزشده معتبرترین نسخه است. بدون کلید یا با کلید اشتباه، هیچ‌چیز بازنویسی نمی‌شود.
+    writesBlocked = true;
+    if (keyHex) pendingEnvelope = env;
+    recoverMirror = parseStore(raw);
+    return emptyStore({ unit: 'toman', theme: 'system', font: 'normal' });
   }
   if (raw) {
     const s = parseStore(raw);
@@ -175,8 +197,40 @@ function load(): Store {
 
 let store: Store = load();
 let lastSaveWarn = 0;
+
+let secTimer: number | undefined;
+let secBusy = false;
+let secDirty = false;
+let secAck = 0;
+function queueSecureSave(now = false) {
+  secDirty = true;
+  window.clearTimeout(secTimer);
+  if (now) void flushSecure();
+  else secTimer = window.setTimeout(() => void flushSecure(), 250);
+}
+async function flushSecure() {
+  window.clearTimeout(secTimer);
+  if (secBusy || !secureKey || writesBlocked) return;
+  secBusy = true;
+  try {
+    while (secDirty) {
+      secDirty = false;
+      const env = await encryptText(secureKey, JSON.stringify(store));
+      toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(env), ack: ++secAck });
+    }
+  } catch {
+    secDirty = true;
+    toast('رمزنگاری و ذخیره‌ی اطلاعات انجام نشد. همین حالا پشتیبان بگیرید.');
+  } finally {
+    secBusy = false;
+  }
+}
 function persist(): boolean {
   if (writesBlocked) return false;
+  if (secureMode) {
+    queueSecureSave();
+    return true;
+  }
   try {
     localStorage.setItem(KEY, JSON.stringify(store));
     return true;
@@ -190,7 +244,7 @@ function persist(): boolean {
 }
 function save() {
   recordHistory();
-  if (persist()) {
+  if (persist() && !secureMode) {
     // Mirror to native SQLite while localStorage remains the authoritative source during migration.
     const rn = (window as unknown as { ReactNativeWebView?: { postMessage(message: string): void } }).ReactNativeWebView;
     rn?.postMessage(JSON.stringify({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) }));
@@ -1407,7 +1461,7 @@ function restoreApply() {
 /* ------------------------------ قفل برنامه ------------------------------ */
 
 const LOCKFAIL_KEY = 'hooman-finance-lockfail';
-const lk = { locked: !!store.settings.lock, cover: false, entry: '', msg: '', busy: false, hiddenAt: 0, bioAvail: false, forgot: false };
+const lk = { locked: false, cover: false, entry: '', msg: '', busy: false, hiddenAt: 0, bioAvail: false, forgot: false };
 let lkTick: number | undefined;
 
 function readFail(): { fails: number; until: number } {
@@ -1504,6 +1558,7 @@ function lkDigit(d: string) {
 
 /** برنامه به پس‌زمینه رفت یا برگشت (از اندروید یا مرورگر) */
 function appVisibility(state: 'background' | 'active') {
+  if (state === 'background' && secureMode) void flushSecure();
   const lock = store.settings.lock;
   if (!lock) return;
   if (state === 'background') {
@@ -1582,7 +1637,7 @@ function lockSection(): string {
   const l = store.settings.lock;
   if (!l) {
     return `<h2 class="section-title">قفل برنامه</h2>
-    <div class="note info"><span>با قفل، هر بار که برنامه را باز می‌کنید (و پس از مدتی که از آن بیرون رفته‌اید) باید رمز عددی یا الگو را وارد کنید. این قفل جلوی دیدن اطلاعات توسط دیگران را می‌گیرد؛ اطلاعات را رمزگذاری نمی‌کند، پس قفل صفحه‌ی خود گوشی را هم نگه دارید.</span>
+    <div class="note info"><span>با قفل، هر بار که برنامه را باز می‌کنید (و پس از مدتی که از آن بیرون رفته‌اید) باید رمز عددی یا الگو را وارد کنید. این قفل جلوی دیدن اطلاعات توسط دیگران را می‌گیرد. قفل صفحه‌ی خود گوشی را هم نگه دارید.</span>
       <button class="btn" data-action="lock-open" data-v="enable">فعال کردن قفل</button></div>`;
   }
   return `<h2 class="section-title">قفل برنامه</h2>
@@ -1593,6 +1648,17 @@ function lockSection(): string {
         <button class="btn ghost" data-action="lock-open" data-v="change">تغییر رمز</button>
         <button class="btn ghost" data-action="lock-open" data-v="disable">خاموش کردن قفل</button>
       </div></div>`;
+}
+
+function encSection(): string {
+  if (!inApp()) return '';
+  const on = secureMode && !!secureKey && !plainPending;
+  const wait = secureMode && !!secureKey && plainPending;
+  return `<h2 class="section-title">رمزنگاری اطلاعات</h2>
+    <div class="note ${on ? 'info' : 'warn'}"><span>${on
+      ? 'اطلاعات روی گوشی رمزنگاری‌شده ذخیره می‌شود (AES-256). کلید در بخش امن خود گوشی است و از آن بیرون نمی‌آید. اگر برنامه را پاک کنید یا گوشی را عوض کنید، فقط از «فایل پشتیبان» می‌توانید اطلاعات را برگردانید؛ پس پشتیبان بگیرید.'
+      : wait ? 'در حال رمزنگاری اطلاعات…'
+      : 'رمزنگاری روی این گوشی فعال نیست و اطلاعات به‌صورت معمولی نگه‌داری می‌شود.'}</span></div>`;
 }
 
 function disableLock() {
@@ -1669,6 +1735,7 @@ function viewSettings(): string {
       </div>
     </div>
     ${lockSection()}
+    ${encSection()}
     <h2 class="section-title">پشتیبان‌گیری</h2>
     <div class="note info"><span>${backupInfoHtml()}</span>
       <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
@@ -3100,6 +3167,13 @@ function checkUpdate() {
   if (view.tab === 'settings') render();
 }
 Object.assign(window, {
+  __encAck: (_id: number, ok: boolean) => {
+    // متن ساده فقط بعد از تأیید ذخیره‌ی نسخه‌ی رمزشده پاک می‌شود
+    if (!ok || !plainPending) return;
+    plainPending = false;
+    try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+    if (view.tab === 'settings') render();
+  },
   __notifyPerm: (r: { ok: boolean }) => {
     remPerm = r.ok ? 'granted' : 'denied';
     if (modal?.kind === 'rem' && modal.f.view === 'list') renderModal();
@@ -3269,16 +3343,44 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && modal) closeModal();
 });
 
-if (!writesBlocked) recordHistory();
-if (!store.sample) persist();
-render();
-// First-run migration / recovery mirror: keep the old localStorage copy untouched.
-if (!writesBlocked) toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) });
-if (writesBlocked) { modal = { kind: 'recover' }; renderModal(); }
-else if (recoveredFromMirror) window.setTimeout(() => toast('اطلاعات از نسخه‌ی پشتیبان خودکار گوشی بازیابی شد.'), 300);
-autoCheckUpdate();
-checkPriceAlerts();
-scheduleNoteSync();
+/** باز کردن اطلاعات رمزشده؛ اگر نشد، نوشتن مسدود می‌ماند و پنجره‌ی بازیابی نشان داده می‌شود */
+async function bootSecure() {
+  try {
+    secureKey = await importKey(keyHex!);
+    if (pendingEnvelope) {
+      const s = parseStore(await decryptText(secureKey, pendingEnvelope));
+      if (!s) throw new Error('bad');
+      store = s;
+      recoverMirror = null;
+      writesBlocked = false;
+      pendingEnvelope = null;
+    }
+  } catch {
+    secureKey = null;
+    if (!pendingEnvelope) secureMode = false; // کلید ساخته نشد: مثل قبل بدون رمزنگاری
+  }
+}
+
+function startup() {
+  lk.locked = !!store.settings.lock;
+  if (secureMode && !writesBlocked && !store.sample) {
+    try { plainPending = !!localStorage.getItem(KEY); } catch { /* ignore */ }
+  }
+  if (!writesBlocked) recordHistory();
+  if (!store.sample) {
+    if (secureMode) queueSecureSave(true);
+    else persist();
+  }
+  render();
+  // First-run migration / recovery mirror: keep the old localStorage copy untouched.
+  if (!writesBlocked && !secureMode) toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) });
+  if (writesBlocked) { modal = { kind: 'recover' }; renderModal(); }
+  else if (recoveredFromMirror) window.setTimeout(() => toast('اطلاعات از نسخه‌ی پشتیبان خودکار گوشی بازیابی شد.'), 300);
+  autoCheckUpdate();
+  checkPriceAlerts();
+  scheduleNoteSync();
+  renderLock();
+}
 
 document.addEventListener('keydown', (ev) => {
   if (!lk.locked || lk.forgot) return;
@@ -3286,7 +3388,6 @@ document.addEventListener('keydown', (ev) => {
   else if (ev.key === 'Backspace') { lk.entry = lk.entry.slice(0, -1); renderLock(); }
 });
 document.addEventListener('visibilitychange', () => appVisibility(document.visibilityState === 'visible' ? 'active' : 'background'));
-renderLock();
 toNative({ type: 'bio-check' });
 
 /** قیمت‌ها هنگام باز شدن اپ و بازگشت به آن خودکار به‌روز می‌شوند (حداکثر هر ۵ دقیقه) */
@@ -3299,3 +3400,6 @@ function autoRefresh() {
 window.setTimeout(autoRefresh, 800);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') autoRefresh(); });
 window.addEventListener('focus', autoRefresh);
+
+if (secureMode) void bootSecure().then(startup);
+else startup();

@@ -8,6 +8,8 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as Notifications from 'expo-notifications';
 import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
+import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 import { checkDatabaseIntegrity, initializeDatabase, readSnapshot, writeSnapshot, type DaraSnapshot } from './src/native/sqlite';
 
 /**
@@ -37,17 +39,37 @@ async function ensureChannel() {
     vibrationPattern: [0, 250, 150, 250],
   });
 }
+/**
+ * کلید رمزنگاری اطلاعات: ۲۵۶ بیت تصادفی، نگه‌داری‌شده در Android Keystore (از طریق SecureStore).
+ * اگر ساخته یا خوانده نشود null برمی‌گردد و برنامه مثل قبل بدون رمزنگاری کار می‌کند.
+ */
+const DATA_KEY_NAME = 'dara-data-key-v1';
+async function loadDataKey(): Promise<string | null> {
+  try {
+    const old = await SecureStore.getItemAsync(DATA_KEY_NAME);
+    if (old && /^[0-9a-f]{64}$/.test(old)) return old;
+    const bytes = await Crypto.getRandomBytesAsync(32);
+    const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    await SecureStore.setItemAsync(DATA_KEY_NAME, hex);
+    return (await SecureStore.getItemAsync(DATA_KEY_NAME)) === hex ? hex : null;
+  } catch {
+    return null;
+  }
+}
 interface WvJob { id: string; url: string }
 
 export default function App() {
   const web = useRef<WebView>(null);
   const [storageReady, setStorageReady] = useState(false);
   const [sqliteSnapshot, setSqliteSnapshot] = useState<string | null>(null);
+  const [dataKey, setDataKey] = useState<string | null>(null);
   const sqliteWriteQueue = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     let active = true;
     void (async () => {
       try {
+        const k = await loadDataKey();
+        if (active) setDataKey(k);
         await initializeDatabase();
         if (await checkDatabaseIntegrity()) {
           const snapshot = await readSnapshot();
@@ -202,7 +224,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; notes?: { id: string; title: string; body: string; at: number }[] };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; notes?: { id: string; title: string; body: string; at: number }[] };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -213,8 +235,10 @@ export default function App() {
         sqliteWriteQueue.current = sqliteWriteQueue.current.then(async () => {
           const snapshot = JSON.parse(msg.snapshot!) as DaraSnapshot;
           await writeSnapshot(snapshot);
+          if (typeof msg.ack === 'number') call('__encAck', msg.ack, true);
         }).catch(() => {
           // Keep localStorage intact; the UI must remain usable if SQLite is unavailable.
+          if (typeof msg.ack === 'number') call('__encAck', msg.ack, false);
         });
         return;
       }
@@ -357,7 +381,7 @@ export default function App() {
         }
       }
     },
-    [reply, checkUpdate, installUpdate, viaWebView],
+    [reply, call, checkUpdate, installUpdate, viaWebView],
   );
 
   useEffect(() => {
@@ -376,7 +400,7 @@ export default function App() {
       <WebView
         ref={web}
         originWhitelist={['*']}
-        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; window.__DARA_SQLITE_SNAPSHOT = ${JSON.stringify(sqliteSnapshot)}; true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; window.__DARA_SQLITE_SNAPSHOT = ${JSON.stringify(sqliteSnapshot)}; window.__DARA_KEY = ${JSON.stringify(dataKey)}; true;`}
         source={{ html: appHtml, baseUrl: 'https://hooman-finance.app/' }}
         javaScriptEnabled
         domStorageEnabled
