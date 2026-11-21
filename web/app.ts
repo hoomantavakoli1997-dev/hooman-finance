@@ -17,6 +17,7 @@ import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAva
 import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
 import { monthRange, monthReport, monthTitle, reportCsv, shiftMonth, txCsv } from '../src/core/report';
+import { AllocId, computeAllocation } from '../src/core/allocation';
 import { GOLD_ID, PriceLog, USD_ID, computeRealReturn, logPrices, type Bench } from '../src/core/realreturn';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
@@ -601,8 +602,9 @@ function viewHome(pf: Portfolio): string {
         ? `<div class="note"><span>${store.settings.lastBackup ? 'پشتیبان شما قدیمی است.' : 'هنوز از اطلاعات پشتیبان نگرفته‌اید.'} با عوض شدن گوشی یا پاک شدن برنامه، اطلاعات از بین می‌رود.</span><button class="btn" data-action="backup-open">پشتیبان‌گیری</button></div>`
         : ''
     }
-    ${marketSection()}
+    ${allocationCard(pf)}
     ${realReturnCard()}
+    ${marketSection()}
     ${incomeTile()}
     <div class="grid2">
       <div class="tile"><span class="k">سود یا زیان فروش‌ها (تحقق‌یافته)</span><span class="v">${pnl(pf.realizedTotal)}</span></div>
@@ -620,6 +622,35 @@ function viewHome(pf: Portfolio): string {
         ? '<div class="note info"><span>نسخه‌ی جدید برنامه آماده است.</span><button class="btn" data-action="update-install">دانلود و نصب</button></div>'
         : ''
     }`;
+}
+
+const ALLOC_COLOR: Record<AllocId, string> = {
+  cash: 'var(--c1)', gold: 'var(--c4)', currency: 'var(--c3)', stock: 'var(--c2)', crypto: 'var(--c5)', other: 'var(--c-other)',
+};
+
+function allocationCard(pf: Portfolio): string {
+  const a = computeAllocation(pf);
+  if (a.slices.length === 0) return '';
+  const R = 15.9155; // محیط ۱۰۰ ⇒ طول هر برش برابر درصدش
+  let off = 25; // از بالا شروع می‌شود
+  const arcs = a.slices.map((sl) => {
+    const gap = a.slices.length > 1 ? Math.min(0.8, sl.pct / 2) : 0; // فاصله‌ی ۲ پیکسلی میان برش‌ها
+    const el = `<circle cx="20" cy="20" r="${R}" fill="none" stroke="${ALLOC_COLOR[sl.id]}" stroke-width="6" stroke-dasharray="${(sl.pct - gap).toFixed(3)} ${(100 - sl.pct + gap).toFixed(3)}" stroke-dashoffset="${off.toFixed(3)}"/>`;
+    off -= sl.pct;
+    return el;
+  }).join('');
+  const pctTxt = (p: number) => ltr(toFa(p < 0.1 ? '<۰٫۱' : p.toFixed(1).replace(/\.0$/, '')).replace('.', '٫') + '٪');
+  const rows = a.slices.map((sl) => `<li><span class="sw" style="background:${ALLOC_COLOR[sl.id]}"></span><span class="nm">${sl.label}</span>
+      <span class="pc">${pctTxt(sl.pct)}</span><span class="am">${hidden() ? MASK : money(sl.value, false)}</span></li>`).join('');
+  return `<section class="tile alloc" aria-label="ترکیب دارایی‌ها">
+    <h2 class="section-title">ترکیب دارایی‌ها</h2>
+    <div class="allocwrap">
+      <svg viewBox="0 0 40 40" class="donut" role="img" aria-label="${a.slices.map((x) => `${x.label} ${x.pct.toFixed(0)} درصد`).join('، ')}">
+        <circle cx="20" cy="20" r="${R}" fill="none" stroke="var(--surface-2)" stroke-width="6"/>${arcs}</svg>
+      <ul class="alloclist">${rows}</ul>
+    </div>
+    ${a.unpriced.length ? `<span class="hint">دارایی‌های بدون قیمت روز در این نمودار نیستند.</span>` : ''}
+  </section>`;
 }
 
 function incomeTile(): string {
