@@ -8,6 +8,9 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as Notifications from 'expo-notifications';
 import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
+import { requestWidgetUpdate } from 'react-native-android-widget';
+import { renderMarketWidget, writeWidgetConfig } from './widget/widget-task-handler';
+import { sanitizeConfig } from './src/native/widgetData';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import { checkDatabaseIntegrity, initializeDatabase, readSnapshot, writeSnapshot, type DaraSnapshot } from './src/native/sqlite';
@@ -224,7 +227,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; mime?: string; notes?: { id: string; title: string; body: string; at: number }[] };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; widget?: unknown; mime?: string; notes?: { id: string; title: string; body: string; at: number }[] };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -240,6 +243,20 @@ export default function App() {
           // Keep localStorage intact; the UI must remain usable if SQLite is unavailable.
           if (typeof msg.ack === 'number') call('__encAck', msg.ack, false);
         });
+        return;
+      }
+      if (msg.type === 'widget-config') {
+        // پیکربندی و آخرین قیمت‌ها برای ویجت؛ ورودی وب‌ویو نامطمئن است و اعتبارسنجی می‌شود
+        void (async () => {
+          try {
+            const cfg = sanitizeConfig(msg.widget);
+            if (!cfg) return;
+            await writeWidgetConfig(cfg);
+            await requestWidgetUpdate({ widgetName: 'DaraMarket', renderWidget: () => renderMarketWidget(cfg), widgetNotFound: () => {} });
+          } catch {
+            // نبودن ویجت روی صفحه یا خطای نوشتن نباید روی برنامه اثر بگذارد
+          }
+        })();
         return;
       }
       if (msg.type === 'exit') {

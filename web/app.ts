@@ -15,6 +15,7 @@ import {
 } from '../src/core/market';
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import { esc, fmtNum, toEn, toFa } from './format';
+import { buildRows } from '../src/native/widgetData';
 import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
 import { FamilyItem, FamilyOpts, familyReportText } from '../src/core/familyreport';
@@ -38,6 +39,8 @@ type Tab = 'home' | 'assets' | 'txs' | 'people' | 'settings';
 interface Settings {
   /** پنهان کردن مبلغ‌ها (برای وقتی دیگران نگاه می‌کنند) */
   hide?: boolean;
+  /** نمایش سرمایه‌ی خالص روی ویجت صفحه‌ی اصلی گوشی (پیش‌فرض خاموش) */
+  widgetWorth?: boolean;
   /** راهنمای اول کار نشان داده شده یا رد شده است */
   onboarded?: boolean;
   /** نرخ تورم سالانه‌ی واردشده‌ی کاربر (٪)؛ تخمین دستی است */
@@ -263,6 +266,33 @@ function save() {
     rn?.postMessage(JSON.stringify({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) }));
   }
   scheduleNoteSync();
+  widgetSync();
+}
+
+/** پیکربندی و آخرین قیمت‌ها را برای ویجت صفحه‌ی اصلی گوشی می‌فرستد (فقط داخل اپ) */
+let widgetTimer: number | undefined;
+function widgetSync() {
+  if (!inApp()) return;
+  window.clearTimeout(widgetTimer);
+  widgetTimer = window.setTimeout(() => {
+    const unit = isToman() ? 'toman' : 'rial';
+    const keys = favKeys();
+    const m = mk();
+    // نمونه‌ی همراه برنامه قیمت زنده نیست؛ هرگز روی ویجت نشان داده نمی‌شود
+    const live = m.source !== 'sample';
+    const t = live ? snapshotTime(m.entries) : 0;
+    let worth: string | null = null;
+    if (store.settings.widgetWorth && !store.sample && !store.settings.hide) {
+      const pf = computePortfolio(store.assets, store.txs, store.prices);
+      const av = pf.assets.reduce((sum, a) => (a.value ? sum.plus(a.value) : sum), Decimal.ZERO);
+      worth = `${fmtNum(fromRial(netWorth(pf.cash, av, peopleWithCheques())))} ${unitLabel()}`;
+    }
+    toNative({ type: 'widget-config', widget: {
+      keys, unit, showWorth: !!worth, worth,
+      rows: live ? buildRows(m.entries, keys, unit) : [],
+      updatedAt: t ? new Date(t + 3.5 * 3600e3).toISOString().slice(0, 19) : null,
+    } });
+  }, 800);
 }
 
 /* ============================ قالب‌بندی ============================ */
@@ -1810,6 +1840,16 @@ function lockSection(): string {
       </div></div>`;
 }
 
+function widgetSection(): string {
+  if (!inApp()) return '';
+  const on = !!store.settings.widgetWorth;
+  return `<h2 class="section-title">ویجت صفحه‌ی اصلی گوشی</h2>
+    <div class="note info"><span>برای افزودن: روی صفحه‌ی اصلی گوشی نگه دارید، «ویجت‌ها» را بزنید و «دارا — قیمت‌های بازار» را بیاورید. قیمت‌هایی که در «نمای بازار» ستاره‌دار کرده‌اید نشان داده می‌شود و ویجت خودش هر حدود نیم‌ساعت قیمت را می‌گیرد؛ زمان آخرین قیمت دریافتی همیشه روی آن نوشته است.</span>
+      <label class="check"><input type="checkbox" data-action="widget-worth" ${on ? 'checked' : ''}><span>سرمایه‌ی خالص هم روی ویجت نشان داده شود</span></label>
+      ${on ? `<span class="hint">هرکس صفحه‌ی اصلی گوشی را ببیند مبلغ سرمایه‌ی شما را می‌بیند${store.settings.lock ? '، حتی با قفل برنامه' : ''}. اگر خودتان «پنهان کردن مبلغ‌ها» را روشن کنید، مبلغ از ویجت برداشته می‌شود.</span>` : '<span class="hint">پیش‌فرض خاموش است تا مبلغی روی صفحه‌ی اصلی دیده نشود.</span>'}
+    </div>`;
+}
+
 function encSection(): string {
   if (!inApp()) return '';
   const on = secureMode && !!secureKey && !plainPending;
@@ -1901,6 +1941,7 @@ function viewSettings(): string {
     <h2 class="section-title">گزارش و خروجی</h2>
     <div class="note info"><span>گزارش هر ماه شمسی و فایل CSV برای Excel. این فایل رمز ندارد؛ فقط برای کسی بفرستید که به آن اعتماد دارید.</span>
       <div class="actions"><button class="btn" data-action="report-open">گزارش ماهانه و خروجی</button></div></div>
+    ${widgetSection()}
     <h2 class="section-title">گزارش برای خانواده</h2>
     <div class="note info"><span>یک خلاصه‌ی متنی و فقط‌خواندنی برای فرستادن به همسر یا فرزند. پیش‌فرض بدون مبلغ و بدون نام است و شما تعیین می‌کنید چه چیزی در آن بیاید.</span>
       <div class="actions"><button class="btn" data-action="family-open">ساخت گزارش خانواده</button></div></div>
@@ -3070,6 +3111,10 @@ document.addEventListener('click', (ev) => {
       renderModal();
       break;
     }
+    case 'widget-worth':
+      store.settings.widgetWorth = !store.settings.widgetWorth;
+      save(); render();
+      break;
     case 'family-open':
       modal = { kind: 'family', f: { amounts: false, names: false, commitments: true } };
       renderModal();
@@ -3886,6 +3931,7 @@ function startup() {
   autoCheckUpdate();
   checkPriceAlerts();
   scheduleNoteSync();
+  widgetSync();
   renderLock();
 }
 

@@ -23,7 +23,24 @@
           "color": "#18b6b0"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "DaraMarket",
+              "label": "دارا — قیمت‌های بازار",
+              "description": "قیمت‌های منتخب نمای بازار روی صفحه‌ی اصلی گوشی",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
     ],
     "backgroundColor": "#0b1f3a",
     "splash": {
