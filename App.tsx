@@ -69,22 +69,36 @@ export default function App() {
   const [sqliteSnapshot, setSqliteSnapshot] = useState<string | null>(null);
   const [dataKey, setDataKey] = useState<string | null>(null);
   const sqliteWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const [bootDiag, setBootDiag] = useState<string | null>(null);
+  /** اگر خواندن حافظه‌ی گوشی خطا داد، چیزی روی داده‌ی احتمالاً سالم نوشته نمی‌شود */
+  const writeAllowed = useRef(true);
   useEffect(() => {
     let active = true;
+    const diag: { integrity: boolean | null; found: string; key: boolean; err: string } = { integrity: null, found: 'none', key: false, err: '' };
     void (async () => {
       try {
         await initializeDatabase();
         let snapshot: Awaited<ReturnType<typeof readSnapshot>> = null;
-        if (await checkDatabaseIntegrity()) snapshot = await readSnapshot();
+        try { diag.integrity = await checkDatabaseIntegrity(); } catch (e) { diag.err += 'integrity:' + String((e as Error)?.message ?? e) + ' '; }
+        // سلامت‌سنجی فقط اطلاع‌رسانی است؛ خواندن همیشه تلاش می‌شود تا داده‌ی سالم به‌خاطر یک چک نادرست گم نشود
+        try {
+          snapshot = await readSnapshot();
+        } catch (e) {
+          writeAllowed.current = false;
+          diag.err += 'read:' + String((e as Error)?.message ?? e) + ' ';
+        }
+        diag.found = !snapshot ? 'none' : (snapshot as { enc?: unknown }).enc === 1 ? 'enc' : 'plain';
         // اگر داده‌ی رمزشده هست ولی کلید گم شده، کلید تازه نمی‌سازیم (کلید تازه داده‌ی قدیمی را برای همیشه ناخوانا می‌کرد)
-        const encrypted = !!snapshot && (snapshot as { enc?: unknown }).enc === 1;
-        const k = await loadDataKey(!encrypted);
+        const encrypted = diag.found === 'enc';
+        const k = await loadDataKey(!encrypted && writeAllowed.current);
+        diag.key = !!k;
         if (active) setDataKey(k);
         if (active && snapshot) setSqliteSnapshot(JSON.stringify(snapshot));
-      } catch {
-        // SQLite is a secondary mirror in this rollout; legacy WebView storage remains available.
+      } catch (e) {
+        writeAllowed.current = false;
+        diag.err += 'init:' + String((e as Error)?.message ?? e);
       } finally {
-        if (active) setStorageReady(true);
+        if (active) { setBootDiag(JSON.stringify(diag)); setStorageReady(true); }
       }
     })();
     return () => { active = false; };
@@ -240,6 +254,7 @@ export default function App() {
         // Serialize writes so rapid edits cannot land in SQLite out of order.
         sqliteWriteQueue.current = sqliteWriteQueue.current.then(async () => {
           const snapshot = JSON.parse(msg.snapshot!) as DaraSnapshot;
+          if (!writeAllowed.current) throw new Error('write blocked: startup read failed');
           await writeSnapshot(snapshot);
           if (typeof msg.ack === 'number') {
             // تأیید فقط وقتی داده‌ی نوشته‌شده واقعاً دوباره خوانده و با ورودی برابر دیده شد
@@ -247,9 +262,9 @@ export default function App() {
             if (!back || JSON.stringify(back) !== JSON.stringify(snapshot)) throw new Error('read-back mismatch');
             call('__encAck', msg.ack, true);
           }
-        }).catch(() => {
+        }).catch((e) => {
           // Keep localStorage intact; the UI must remain usable if SQLite is unavailable.
-          if (typeof msg.ack === 'number') call('__encAck', msg.ack, false);
+          if (typeof msg.ack === 'number') call('__encAck', msg.ack, false, String((e as Error)?.message ?? e).slice(0, 160));
         });
         return;
       }
@@ -440,7 +455,7 @@ export default function App() {
       <WebView
         ref={web}
         originWhitelist={['*']}
-        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; window.__DARA_SQLITE_SNAPSHOT = ${JSON.stringify(sqliteSnapshot)}; window.__DARA_KEY = ${JSON.stringify(dataKey)}; true;`}
+        injectedJavaScriptBeforeContentLoaded={`window.__APP_BUILD = ${BUILD}; window.__DARA_SQLITE_SNAPSHOT = ${JSON.stringify(sqliteSnapshot)}; window.__DARA_KEY = ${JSON.stringify(dataKey)}; window.__DARA_DIAG = ${JSON.stringify(bootDiag)}; true;`}
         source={{ html: appHtml, baseUrl: 'https://hooman-finance.app/' }}
         javaScriptEnabled
         domStorageEnabled

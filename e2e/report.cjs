@@ -1,7 +1,7 @@
 // آزمون رابط گزارش ماهانه و خروجی CSV.  اجرا: node e2e/report.cjs
 const { openApp, reporter } = require('./helpers.cjs');
 const t = reporter('report');
-const today = new Date().toISOString().slice(0, 10);
+const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tehran' });
 const store = JSON.stringify({
   v: 1, sample: false,
   assets: [{ id: 'gold', name: 'طلا ۱۸ عیار', unit: 'گرم', kind: 'metal', decimals: 3 }],

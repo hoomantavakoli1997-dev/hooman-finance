@@ -215,6 +215,24 @@ function load(): Store {
 let store: Store = load();
 let lastSaveWarn = 0;
 
+interface BootDiag { integrity: boolean | null; found: string; key: boolean; err: string }
+let bootDiag: BootDiag | null = null;
+try { const d = (window as unknown as { __DARA_DIAG?: string | null }).__DARA_DIAG; if (d) bootDiag = JSON.parse(d) as BootDiag; } catch { /* ignore */ }
+let lastPersistOk = 0;
+let lastPersistErr = '';
+function storageStatusHtml(): string {
+  if (!inApp()) return '';
+  const d = bootDiag;
+  const rows: string[] = [];
+  rows.push(`حالت ذخیره: ${secureMode ? 'رمزشده روی گوشی' : 'ساده (بدون کلید)'}`);
+  if (d) {
+    rows.push(`هنگام باز شدن: ${d.found === 'enc' ? 'اطلاعات رمزشده پیدا شد' : d.found === 'plain' ? 'اطلاعات ذخیره‌شده پیدا شد' : 'اطلاعاتی در حافظه‌ی گوشی نبود'}`);
+    rows.push(`کلید رمزنگاری: ${d.key ? 'در دسترس' : 'در دسترس نبود'}`);
+    if (d.err) rows.push(`خطای هنگام باز شدن: <span dir="ltr">${esc(d.err)}</span>`);
+  }
+  rows.push(lastPersistErr ? `آخرین ذخیره: ناموفق (<span dir="ltr">${esc(lastPersistErr)}</span>)` : lastPersistOk ? `آخرین ذخیره‌ی تأییدشده: ${toFa(new Date(lastPersistOk).toLocaleTimeString('fa-IR'))}` : 'هنوز ذخیره‌ای در این اجرا انجام نشده');
+  return `<div class="card"><b>وضعیت ذخیره‌سازی</b><div class="muted" style="font-size:12px;line-height:1.9;margin-top:6px">${rows.join('<br>')}</div></div>`;
+}
 let secBusy = false;
 let secDirty = false;
 let secAck = 0;
@@ -1969,6 +1987,7 @@ function viewSettings(): string {
     </div>
     ${updateSection()}
     <div class="set-group"><span class="n">۶</span><div><b>داده‌ها</b><span>بازگشت به داده‌ی آزمایشی یا پاک کردن همه‌چیز</span></div></div>
+    ${storageStatusHtml()}
     <h2 class="section-title">عملیات حساس</h2>
     <div class="actions">
       <button class="btn ghost" data-action="ask" data-v="reset">بازگشت به داده‌ی آزمایشی</button>
@@ -3752,7 +3771,9 @@ Object.assign(window, {
       toast(`${toFa(String(n))} هشدار قیمت وقتی برنامه بسته بود فعال شد. زنگوله را بزنید.`);
     }
   },
-  __encAck: (id: number, ok: boolean) => {
+  __encAck: (id: number, ok: boolean, err?: string) => {
+    if (ok) { lastPersistOk = Date.now(); lastPersistErr = ''; } else if (err) lastPersistErr = err;
+    if (view.tab === 'settings') render();
     if (!ok) {
       // نوشتن روی گوشی انجام نشد: به کاربر گفته می‌شود و چند بار دوباره تلاش می‌کنیم
       ackFails += 1;
