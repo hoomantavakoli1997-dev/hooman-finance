@@ -32,6 +32,10 @@ export interface Tx {
   unitPrice: string;
   fee: string;
   note?: string;
+  /** فقط برای واریز نقد: این واریز درآمد است (سود سهام، سود سپرده یا سود روزشمار)، نه آورده‌ی سرمایه */
+  income?: 'dividend' | 'deposit' | 'accrual';
+  /** مبدأ درآمد (مثلاً نام سهم یا بانک) */
+  source?: string;
   /** حذف نرم: اگر پر باشد معامله محاسبه نمی‌شود اما قابل بازیابی است */
   deletedAt?: string | null;
 }

@@ -15,6 +15,7 @@ import {
 } from '../src/core/market';
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import sampleRaw from './market-sample.json';
+import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
 import { GOLD_ID, PriceLog, USD_ID, computeRealReturn, logPrices, type Bench } from '../src/core/realreturn';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
@@ -601,6 +602,7 @@ function viewHome(pf: Portfolio): string {
     }
     ${marketSection()}
     ${realReturnCard()}
+    ${incomeTile()}
     <div class="grid2">
       <div class="tile"><span class="k">سود یا زیان فروش‌ها (تحقق‌یافته)</span><span class="v">${pnl(pf.realizedTotal)}</span></div>
       <div class="tile"><span class="k">سود یا زیان دارایی‌های فعلی</span><span class="v">${pnl(pf.unrealizedTotal)}</span></div>
@@ -609,12 +611,23 @@ function viewHome(pf: Portfolio): string {
       <button class="btn" data-action="new-tx" data-asset="" data-type="buy">ثبت خرید</button>
       <button class="btn" data-action="new-tx" data-asset="" data-type="sell">ثبت فروش</button>
       <button class="btn ghost" data-action="new-tx" data-asset="${CASH_ID}" data-type="deposit">واریز نقد</button>
+      <button class="btn ghost" data-action="income-new">ثبت سود دریافتی</button>
     </div>
     ${
       inApp() && upd.status === 'available'
         ? '<div class="note info"><span>نسخه‌ی جدید برنامه آماده است.</span><button class="btn" data-action="update-install">دانلود و نصب</button></div>'
         : ''
     }`;
+}
+
+function incomeTile(): string {
+  const to = todayIso();
+  const t = incomeTotals(store.txs, addDaysIso(to, -365), to);
+  if (t.total.lte(0)) return '';
+  const part = (label: string, v: Decimal) => (v.gt(0) ? `<span>${label} <b>${money(v, false)}</b></span>` : '');
+  return `<div class="tile"><span class="k">سود دریافتی در ۳۶۵ روز اخیر</span>
+    <span class="v">${hidden() ? MASK : money(t.total)}</span>
+    <div class="mini">${part('سود سهام', t.dividend)}${part('سود سپرده', t.deposit)}${part('سود روزشمار', t.accrual)}</div></div>`;
 }
 
 /* ------------------------------ سود واقعی ------------------------------ */
@@ -862,7 +875,7 @@ function txListHtml(): string {
       const gross = q.mul(p);
       const total = t.type === 'buy' ? gross.plus(fee) : t.type === 'sell' ? gross.minus(fee) : gross;
       const line = isCash
-        ? `${TYPE_LABEL[t.type]} نقد`
+        ? (t.income ? `${INCOME_LABEL[t.income]}${t.source ? ' ' + esc(t.source) : ''}` : `${TYPE_LABEL[t.type]} نقد`)
         : `${qty(q, asset ?? { id: '', name: '', unit: '', kind: 'custom', decimals: 3 })} × ${money(p, false)}`;
       const r = rowsById.get(t.id);
       const actions = t.deletedAt
@@ -1858,6 +1871,16 @@ interface TxForm {
   qty: string; price: string; fee: string; note: string;
   error: string;
 }
+interface IncomeForm {
+  kind: IncomeKind; y: string; m: string; d: string; amount: string; source: string; note: string;
+  /** کمک‌محاسبه‌ی سود روزشمار */
+  principal: string; rate: string; fy: string; fm: string; fd: string; error: string;
+}
+function newIncomeForm(kind: IncomeKind = 'dividend'): IncomeForm {
+  const t = jf(todayIso());
+  const from = jf(addDaysIso(todayIso(), -30));
+  return { kind, y: t.y, m: t.m, d: t.d, amount: '', source: '', note: '', principal: '', rate: '', fy: from.y, fm: from.m, fd: from.d, error: '' };
+}
 interface PriceForm { assetId: string; price: string; error: string }
 interface AssetForm {
   name: string; unit: string; decimals: string; preset: string; error: string;
@@ -2103,6 +2126,7 @@ type Modal =
   | { kind: 'lock'; f: { mode: 'enable' | 'change' | 'disable'; kind: LockKind; stage: 'cur' | 'new' | 'confirm'; first: string; curOk: boolean; cur: string; pin: string; pin2: string; error: string; busy: boolean } }
   | { kind: 'rem'; f: RemForm }
   | { kind: 'infl'; f: { v: string; error: string } }
+  | { kind: 'income'; f: IncomeForm }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -2336,6 +2360,28 @@ function renderModal() {
         <button class="btn" data-action="recover-file">بازیابی از فایل پشتیبان</button>
         <button class="btn ghost bad" data-action="recover-empty">شروع با اطلاعات خالی</button>
       </div><input type="file" id="restore-file" hidden>`);
+    return;
+  }
+  if (modal.kind === 'income') {
+    const f = modal.f;
+    const kinds = (Object.keys(INCOME_LABEL) as IncomeKind[]).map((k): [string, string] => [k, INCOME_LABEL[k]]);
+    const accr = f.kind === 'accrual';
+    modalEl.innerHTML = sheet(`<h2>ثبت سود دریافتی</h2>
+      <div class="field"><span class="lab">نوع سود</span>${seg('income-kind', f.kind, kinds)}</div>
+      <div class="field"><label for="in-src">${f.kind === 'dividend' ? 'نام سهم' : 'نام بانک یا حساب'} (اختیاری)</label>
+        <input id="in-src" data-field="source" value="${esc(f.source)}" autocomplete="off"></div>
+      ${accr ? `<div class="note info"><span>کمک‌محاسبه: سود روزشمار = اصل پول × نرخ سالانه × تعداد روز ÷ ۳۶۵ (از تاریخ شروع تا تاریخ دریافت).</span></div>
+        <div class="field"><label for="in-pr">اصل پول (${unitLabel()})</label><input id="in-pr" data-field="principal" inputmode="decimal" value="${esc(f.principal)}" autocomplete="off"></div>
+        <div class="field"><label for="in-rt">نرخ سود سالانه (درصد)</label><input id="in-rt" data-field="rate" inputmode="decimal" value="${esc(f.rate)}" autocomplete="off"></div>
+        <div class="field"><span class="lab">تاریخ شروع (شمسی)</span>${dateFields(f.fy, f.fm, f.fd, ['in-fy', 'in-fm', 'in-fd'], ['fy', 'fm', 'fd'])}</div>
+        <div class="actions"><button class="btn ghost" data-action="income-calc">محاسبه‌ی مبلغ سود</button></div>` : ''}
+      <div class="field"><span class="lab">تاریخ دریافت (شمسی)</span>${dateFields(f.y, f.m, f.d, ['in-y', 'in-m', 'in-d'], ['y', 'm', 'd'])}</div>
+      <div class="field"><label for="in-am">مبلغ سود دریافتی (${unitLabel()})</label>
+        <input id="in-am" data-field="amount" inputmode="decimal" value="${esc(f.amount)}" autocomplete="off">
+        <span class="hint">مبلغ به نقد شما اضافه می‌شود و جزو درآمد حساب می‌شود، نه آورده‌ی سرمایه.</span></div>
+      <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
+      <div class="actions"><button class="btn" data-action="income-save">ذخیره</button>
+        <button class="btn ghost" data-action="close">انصراف</button></div>`);
     return;
   }
   if (modal.kind === 'infl') {
@@ -2724,6 +2770,47 @@ document.addEventListener('click', (ev) => {
       render();
       toast('قیمت روز ذخیره شد.');
       checkPriceAlerts();
+      break;
+    }
+    case 'income-new':
+      modal = { kind: 'income', f: newIncomeForm() };
+      renderModal();
+      break;
+    case 'income-kind':
+      if (modal?.kind === 'income') { modal.f.kind = (v as IncomeKind) || 'dividend'; renderModal(); }
+      break;
+    case 'income-calc': {
+      if (modal?.kind !== 'income') break;
+      const f = modal.f;
+      const pr = parseField('اصل پول', f.principal);
+      if (typeof pr === 'string') return setErr(pr);
+      const rate = Number(toEn(f.rate));
+      if (!f.rate.trim() || !Number.isFinite(rate) || rate < 0) return setErr('نرخ سود سالانه معتبر نیست.');
+      const from = jalaliToIso(Number(toEn(f.fy)), Number(toEn(f.fm)), Number(toEn(f.fd)));
+      const to = jalaliToIso(Number(toEn(f.y)), Number(toEn(f.m)), Number(toEn(f.d)));
+      if (!from || !to) return setErr('تاریخ شروع یا دریافت معتبر نیست.');
+      const r = accrualInterest(toRialDec(pr), Decimal.of(String(rate)), from, to);
+      if (!r) return setErr('تاریخ دریافت باید بعد از تاریخ شروع باشد.');
+      f.amount = rialToField(r.toString());
+      f.error = '';
+      renderModal();
+      break;
+    }
+    case 'income-save': {
+      if (modal?.kind !== 'income') break;
+      const f = modal.f;
+      const date = jalaliToIso(Number(toEn(f.y)), Number(toEn(f.m)), Number(toEn(f.d)));
+      if (!date) return setErr('تاریخ دریافت معتبر نیست.');
+      const amt = parseField('مبلغ سود', f.amount);
+      if (typeof amt === 'string') return setErr(amt);
+      const rial = toRialDec(amt);
+      const bad = validateIncome(date, rial);
+      if (bad) return setErr(bad);
+      const r = addTx(store.txs, incomeDraft(f.kind, date, rial, f.source));
+      if (!r.ok) return setErr('ثبت سود انجام نشد.');
+      store.txs = r.txs;
+      save(); closeModal(); render();
+      toast(`${INCOME_LABEL[f.kind]} ثبت شد و به نقد اضافه شد.`);
       break;
     }
     case 'infl-open':
