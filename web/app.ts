@@ -16,6 +16,7 @@ import {
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
+import { monthRange, monthReport, monthTitle, reportCsv, shiftMonth, txCsv } from '../src/core/report';
 import { GOLD_ID, PriceLog, USD_ID, computeRealReturn, logPrices, type Bench } from '../src/core/realreturn';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
@@ -612,6 +613,7 @@ function viewHome(pf: Portfolio): string {
       <button class="btn" data-action="new-tx" data-asset="" data-type="sell">ثبت فروش</button>
       <button class="btn ghost" data-action="new-tx" data-asset="${CASH_ID}" data-type="deposit">واریز نقد</button>
       <button class="btn ghost" data-action="income-new">ثبت سود دریافتی</button>
+      <button class="btn ghost" data-action="report-open">گزارش ماهانه و خروجی Excel</button>
     </div>
     ${
       inApp() && upd.status === 'available'
@@ -1442,6 +1444,25 @@ function normalizeStore(raw: unknown): Store | null {
   return s;
 }
 
+/** فایل متنی (CSV) را در اپ با منوی اشتراک‌گذاری و در مرورگر با دانلود می‌دهد */
+function exportFile(name: string, text: string, mime = 'text/csv') {
+  if (inApp()) {
+    toNative({ type: 'share-file', name, text, mime });
+    toast('فایل ساخته شد؛ مقصد (مثلاً جیمیل یا Drive) را انتخاب کنید.');
+    return;
+  }
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('فایل دانلود شد.');
+  } catch {
+    toast('ساخت فایل ممکن نشد.');
+  }
+}
+
 async function makeBackup() {
   if (modal?.kind !== 'backup') return;
   const f = modal.f;
@@ -1786,6 +1807,9 @@ function viewSettings(): string {
     </div>
     ${lockSection()}
     ${encSection()}
+    <h2 class="section-title">گزارش و خروجی</h2>
+    <div class="note info"><span>گزارش هر ماه شمسی و فایل CSV برای Excel. این فایل رمز ندارد؛ فقط برای کسی بفرستید که به آن اعتماد دارید.</span>
+      <div class="actions"><button class="btn" data-action="report-open">گزارش ماهانه و خروجی</button></div></div>
     <h2 class="section-title">پشتیبان‌گیری</h2>
     <div class="note info"><span>${backupInfoHtml()}</span>
       <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
@@ -2127,6 +2151,7 @@ type Modal =
   | { kind: 'rem'; f: RemForm }
   | { kind: 'infl'; f: { v: string; error: string } }
   | { kind: 'income'; f: IncomeForm }
+  | { kind: 'report'; f: { y: number; m: number } }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -2360,6 +2385,35 @@ function renderModal() {
         <button class="btn" data-action="recover-file">بازیابی از فایل پشتیبان</button>
         <button class="btn ghost bad" data-action="recover-empty">شروع با اطلاعات خالی</button>
       </div><input type="file" id="restore-file" hidden>`);
+    return;
+  }
+  if (modal.kind === 'report') {
+    const { y, m } = modal.f;
+    const rg = monthRange(y, m);
+    const r = rg ? monthReport(store.assets, store.txs, rg.from, rg.to, store.history ?? []) : null;
+    const row = (k: string, v: string) => `<div class="between rr"><span>${k}</span><b>${v}</b></div>`;
+    const sgn = (d: Decimal) => `<span class="${d.gt(0) ? 'gain' : d.isNegative() ? 'loss' : ''}">${money(d)}</span>`;
+    modalEl.innerHTML = sheet(`<h2>گزارش ماهانه</h2>
+      <div class="between"><button class="btn ghost" data-action="report-nav" data-v="-1" aria-label="ماه قبل">‹ قبل</button>
+        <b>${toFa(monthTitle(y, m))}</b>
+        <button class="btn ghost" data-action="report-nav" data-v="1" aria-label="ماه بعد">بعد ›</button></div>
+      ${r ? `<div class="tile">
+        ${row('تعداد معاملات', toFa(String(r.txCount)))}
+        ${row('مجموع خرید', money(r.bought))}
+        ${row('مجموع فروش (خالص)', money(r.sold))}
+        ${row('کارمزدها', money(r.fees))}
+        ${row('سود یا زیان فروش‌ها', sgn(r.realized))}
+        ${row('سود دریافتی (سهام، سپرده، روزشمار)', money(r.income.total))}
+        ${row('واریز نقد', money(r.cashIn))}
+        ${row('برداشت نقد', money(r.cashOut))}
+        ${r.worthStart && r.worthEnd ? row('سرمایه‌ی اول ← آخر ماه', `${money(r.worthStart, false)} ← ${money(r.worthEnd, false)}`) : ''}
+      </div>` : '<div class="empty">ماه معتبر نیست.</div>'}
+      <span class="hint">فایل CSV را Excel و Google Sheets باز می‌کنند. مبلغ‌ها در فایل به ریال هستند.</span>
+      <div class="actions">
+        <button class="btn" data-action="report-csv" data-v="month">خروجی تراکنش‌های این ماه</button>
+        <button class="btn ghost" data-action="report-csv" data-v="all">خروجی همه‌ی تراکنش‌ها</button>
+        <button class="btn ghost" data-action="report-csv" data-v="summary">خروجی خلاصه‌ی ماه</button>
+        <button class="btn ghost" data-action="close">بستن</button></div>`);
     return;
   }
   if (modal.kind === 'income') {
@@ -2770,6 +2824,29 @@ document.addEventListener('click', (ev) => {
       render();
       toast('قیمت روز ذخیره شد.');
       checkPriceAlerts();
+      break;
+    }
+    case 'report-open': {
+      const j = isoToJalali(todayIso())!;
+      modal = { kind: 'report', f: { y: j.y, m: j.m } };
+      renderModal();
+      break;
+    }
+    case 'report-nav':
+      if (modal?.kind === 'report') {
+        const n = shiftMonth(modal.f.y, modal.f.m, Number(v));
+        if (n.y >= 1300 && n.y <= 1500) { modal.f = n; renderModal(); }
+      }
+      break;
+    case 'report-csv': {
+      if (modal?.kind !== 'report') break;
+      const { y, m } = modal.f;
+      const rg = monthRange(y, m);
+      if (!rg) break;
+      const stamp = `${y}-${String(m).padStart(2, '0')}`;
+      if (v === 'all') exportFile(`dara-transactions-all.csv`, txCsv(store.assets, store.txs));
+      else if (v === 'summary') exportFile(`dara-report-${stamp}.csv`, reportCsv(monthTitle(y, m), monthReport(store.assets, store.txs, rg.from, rg.to, store.history ?? [])));
+      else exportFile(`dara-transactions-${stamp}.csv`, txCsv(store.assets, store.txs, rg.from, rg.to));
       break;
     }
     case 'income-new':

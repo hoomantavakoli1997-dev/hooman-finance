@@ -224,7 +224,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; notes?: { id: string; title: string; body: string; at: number }[] };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; mime?: string; notes?: { id: string; title: string; body: string; at: number }[] };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -327,7 +327,8 @@ export default function App() {
             const uri = `${FileSystem.cacheDirectory ?? ''}${msg.name.replace(/[^\w.\-]/g, '_')}`;
             await FileSystem.writeAsStringAsync(uri, msg.text as string, { encoding: FileSystem.EncodingType.UTF8 });
             if (!(await Sharing.isAvailableAsync())) throw new Error('اشتراک‌گذاری در این دستگاه نیست.');
-            await Sharing.shareAsync(uri, { mimeType: 'application/octet-stream', dialogTitle: 'ارسال فایل پشتیبان' });
+            const csv = msg.mime === 'text/csv';
+            await Sharing.shareAsync(uri, { mimeType: csv ? 'text/csv' : 'application/octet-stream', dialogTitle: csv ? 'ارسال گزارش' : 'ارسال فایل پشتیبان' });
             call('__shareReply', { ok: true });
           } catch (e) {
             call('__shareReply', { ok: false, error: String((e as Error)?.message ?? e).slice(0, 120) });
