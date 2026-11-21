@@ -118,7 +118,7 @@ function seed(): Store {
       t('gold', 'sell', '2026-10-10', '3', '258000000', '1000000'),
     ],
     prices: { gold: p('gold', '258000000'), usd: p('usd', '2680000'), usdt: p('usdt', '2690000') },
-    people: [{ id: 'p1', name: 'هومن' }, { id: 'p2', name: 'بلو بانک' }],
+    people: [{ id: 'p1', name: 'علی' }, { id: 'p2', name: 'بلو بانک' }],
     debts: [
       { id: 'd1', personId: 'p1', direction: 'lent', title: 'قرض', amount: '100000000', date: jd(1405, 2, 10) },
       {
@@ -653,8 +653,6 @@ function viewHome(pf: Portfolio): string {
         ? `<div class="note"><span>${store.settings.lastBackup ? 'پشتیبان شما قدیمی است.' : 'هنوز از اطلاعات پشتیبان نگرفته‌اید.'} با عوض شدن گوشی یا پاک شدن برنامه، اطلاعات از بین می‌رود.</span><button class="btn" data-action="backup-open">پشتیبان‌گیری</button></div>`
         : ''
     }
-    ${allocationCard(pf)}
-    ${realReturnCard()}
     ${marketSection()}
     ${incomeTile()}
     <div class="grid2">
@@ -906,9 +904,11 @@ function pnlSummary(pf: Portfolio): string {
 function viewAssets(pf: Portfolio): string {
   const ppl = peopleWithCheques();
   return `${header('دارایی‌ها')}
-    ${pnlSummary(pf)}
-    <h2 class="section-title"><span>سهم هر دارایی از سرمایه</span></h2>
+    ${allocationCard(pf)}
+    <h2 class="section-title"><span>سهم هر دارایی و سرمایه‌ها</span></h2>
     ${assetsOverview(pf, ppl)}
+    ${realReturnCard()}
+    ${pnlSummary(pf)}
     <div class="actions">
       <button class="btn" data-action="add-asset">افزودن دارایی</button>
       <button class="btn ghost" data-action="refresh">به‌روزرسانی قیمت‌ها</button>
@@ -1201,7 +1201,7 @@ function viewPeople(): string {
       <button class="btn" data-action="new-debt" data-v="borrowed">وام یا قرض گرفتم</button>
       <button class="btn ghost" data-action="loan-open">ماشین‌حساب وام و قسط</button>
     </div>
-    <div class="list">${rows || '<div class="empty">هنوز شخصی یا وامی ثبت نشده است.<br>مثلاً «به هومن ۱۰ میلیون قرض دادم» یا «وام بانک ۱۵ میلیون گرفتم».</div>'}</div>
+    <div class="list">${rows || '<div class="empty">هنوز شخصی یا وامی ثبت نشده است.<br>مثلاً «به علی ۱۰ میلیون قرض دادم» یا «وام بانک ۱۵ میلیون گرفتم».</div>'}</div>
     <div class="note info"><span>طلب‌ها، بدهی‌ها و چک‌های باز در «سرمایه‌ی خالص» صفحه‌ی خانه حساب می‌شوند: نقد + دارایی‌ها + طلب‌ها − بدهی‌ها. چک دریافتیِ برگشتی قابل‌وصول حساب نمی‌شود. با «وصول‌شده» کردن چک، مبلغ در نقد واریز یا برداشت می‌شود.</span></div>`;
 }
 
@@ -1332,7 +1332,7 @@ function debtFormHtml(f: DebtForm): string {
       <button data-action="debt-dir" data-v="lent" aria-pressed="${lent}">به او دادم</button>
       <button data-action="debt-dir" data-v="borrowed" aria-pressed="${!lent}">از او گرفتم</button></div></div>
     <div class="field"><label for="d-name">نام شخص یا بانک</label>
-      <input id="d-name" data-field="name" list="d-names" value="${esc(f.name)}" autocomplete="off" placeholder="مثلاً هومن یا بلو بانک">
+      <input id="d-name" data-field="name" list="d-names" value="${esc(f.name)}" autocomplete="off" placeholder="مثلاً علی یا بلو بانک">
       <datalist id="d-names">${names}</datalist></div>
     <div class="field"><label for="d-title">عنوان (اختیاری)</label>
       <input id="d-title" data-field="title" value="${esc(f.title)}" autocomplete="off" placeholder="مثلاً قرض یا وام خرید"></div>
@@ -1674,7 +1674,7 @@ function renderLock() {
   lockEl.hidden = !show;
   appEl.toggleAttribute('inert', show);
   if (!show || !lock) { lockEl.innerHTML = ''; return; }
-  const brand = '<div class="lk-brand">Hooman Finance</div>';
+  const brand = '<div class="lk-brand">Dara | دارا</div>';
   if (!lk.locked) { lockEl.innerHTML = `<div class="lockscr">${brand}</div>`; return; }
   if (lk.forgot) {
     lockEl.innerHTML = `<div class="lockscr">${brand}
@@ -1928,7 +1928,6 @@ function viewSettings(): string {
     <h2 class="section-title">پشتیبانی</h2>
     <div class="note info">
       <span>برای پرسش، گزارش خطا یا پیشنهاد، در تلگرام پیام بدهید:</span>
-      <b dir="ltr" style="font-size:1.1rem;user-select:all">${SUPPORT_ID}</b>
       <div class="actions">
         <a class="btn" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer" data-action="support-open">باز کردن تلگرام</a>
         <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
@@ -2316,10 +2315,15 @@ function closeModal() {
 }
 
 const ONBOARD: { title: string; body: string; icon: string }[] = [
-  { icon: '◈', title: 'به دارا خوش آمدید', body: 'دارایی‌ها، بدهی‌ها، طلب‌ها و چک‌هایتان را یک‌جا ببینید و سود و زیانتان را بدانید. اطلاعات فقط روی گوشی شما می‌ماند و جایی فرستاده نمی‌شود.' },
-  { icon: '①', title: 'از کجا شروع کنم؟', body: 'اول موجودی نقد را با «واریز نقد» ثبت کنید. بعد هر خرید یا فروش (طلا، دلار، سهام و…) را با «ثبت خرید» و «ثبت فروش» وارد کنید. می‌توانید هر چیز را بعداً ویرایش یا حذف کنید.' },
-  { icon: '②', title: 'قیمت‌ها از کجا می‌آید؟', body: 'قیمت طلا و دلار خودکار از اینترنت می‌آید و سهام را از بخش «دارایی‌ها» به بورس وصل می‌کنید. برنامه هیچ قیمتی نمی‌سازد: منبع و زمان هر قیمت دیده می‌شود و اگر قدیمی باشد هشدار می‌دهد.' },
-  { icon: '③', title: 'اطلاعات را امن نگه دارید', body: 'در «تنظیمات» قفل رمز یا الگو بگذارید و حتماً پشتیبان بگیرید. اگر برنامه پاک شود یا گوشی عوض شود، فقط فایل پشتیبان اطلاعات را برمی‌گرداند. یادآورها هم اقساط و چک‌ها را به شما خبر می‌دهند.' },
+  { icon: '◈', title: 'به دارا خوش آمدید', body: 'دارایی‌ها، بدهی‌ها، طلب‌ها و چک‌هایتان را یک‌جا ببینید و سود و زیانتان را بدانید. اطلاعات فقط روی گوشی شما می‌ماند، رمزنگاری می‌شود و جایی فرستاده نمی‌شود. این راهنما چند صفحه‌ی کوتاه است و بعداً از «تنظیمات» دوباره باز می‌شود.' },
+  { icon: '①', title: 'از کجا شروع کنم؟', body: 'اول موجودی نقد را با «واریز نقد» ثبت کنید. بعد هر خرید یا فروش (طلا، دلار، سهام و…) را از تب «معاملات» با «ثبت خرید» و «ثبت فروش» وارد کنید. هر چیز را می‌توانید بعداً ویرایش یا حذف کنید و ثبت اشتباه هم هشدار می‌دهد.' },
+  { icon: '②', title: 'قیمت‌ها از کجا می‌آید؟', body: 'قیمت طلا، دلار و ارزها خودکار از اینترنت می‌آید. سهام را در «دارایی‌ها ← افزودن دارایی» به بورس وصل می‌کنید. برنامه هیچ قیمتی نمی‌سازد: منبع و زمان هر قیمت دیده می‌شود، قیمت دستی برچسب «دستی» دارد و اگر قیمتی قدیمی باشد هشدار می‌دهد.' },
+  { icon: '③', title: 'خانه: سرمایه‌ی خالص و روند', body: 'بالای خانه سرمایه‌ی خالص (نقد + دارایی‌ها + طلب‌ها − بدهی‌ها) را می‌بینید. روی نمودار روند بزنید یا انگشت را بکشید تا مقدار و تغییر هر نقطه را ببینید؛ بازه را (روز، هفته، ماه…) عوض کنید. با آیکون چشم، مبلغ‌ها پنهان می‌شود. «نمای بازار» هم قیمت‌های ستاره‌دار شما را نشان می‌دهد.' },
+  { icon: '④', title: 'دارایی‌ها: ترکیب، سود و زیان', body: 'تب «دارایی‌ها» ترکیب دارایی‌ها، سهم هرکدام از سرمایه و درصد سود و زیانشان را نشان می‌دهد. «سود واقعی» می‌گوید در مقایسه با نگه‌داشتن دلار، طلا یا تورم چه بوده است؛ نرخ تورم را خودتان وارد می‌کنید و قیمت تاریخی ساخته نمی‌شود. با ثبت «سود سهام و سپرده» درآمدتان هم حساب می‌شود.' },
+  { icon: '⑤', title: 'اشخاص، وام و چک', body: 'در تب «اشخاص» قرض‌ها، وام‌ها و اقساط را ثبت کنید و پرداخت هر قسط را بزنید. چک‌های دریافتی و پرداختی با سررسید ثبت می‌شوند و در سرمایه‌ی خالص حساب می‌شوند. ماشین‌حساب وام هم قسط ماهانه را برایتان حساب می‌کند.' },
+  { icon: '⑥', title: 'یادآور و اعلان', body: 'از زنگ بالای خانه، یادآور سررسید قسط و چک، یادآور تاریخ دلخواه و هشدار قیمت خرید یا فروش بسازید. اعلان‌ها را در تنظیمات گوشی اجازه دهید. هشدار قیمت وقتی بررسی می‌شود که برنامه باز باشد یا قیمت‌ها به‌روز شوند.' },
+  { icon: '⑦', title: 'گزارش، خروجی و ویجت', body: 'از «تنظیمات» گزارش ماهانه و خروجی Excel بگیرید یا خلاصه‌ی فقط‌خواندنی (بدون مبلغ و نام، مگر خودتان بخواهید) برای خانواده بفرستید. ویجت «دارا — قیمت‌های بازار» را هم می‌توانید روی صفحه‌ی اصلی گوشی بگذارید.' },
+  { icon: '⑧', title: 'اطلاعات را امن نگه دارید', body: 'در «تنظیمات» قفل رمز، الگو یا اثر انگشت بگذارید و حتماً پشتیبان بگیرید. چون اطلاعات رمزنگاری‌شده روی گوشی است، اگر برنامه پاک شود یا گوشی عوض شود فقط فایل پشتیبان آن را برمی‌گرداند. پشتیبان را جایی امن نگه دارید.' },
 ];
 
 function finishOnboard() {
@@ -3488,8 +3492,8 @@ document.addEventListener('click', (ev) => {
     case 'support-copy':
       navigator.clipboard?.writeText(SUPPORT_ID).then(
         () => toast('شناسه کپی شد.'),
-        () => toast(`شناسه‌ی پشتیبانی: ${SUPPORT_ID}`),
-      ) ?? toast(`شناسه‌ی پشتیبانی: ${SUPPORT_ID}`);
+        () => toast('کپی ممکن نشد؛ دکمه‌ی «باز کردن تلگرام» را بزنید.'),
+      ) ?? toast('کپی ممکن نشد؛ دکمه‌ی «باز کردن تلگرام» را بزنید.');
       break;
     case 'update-check':
       checkUpdate();

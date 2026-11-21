@@ -15,6 +15,7 @@ const store = JSON.stringify({
 
 (async () => {
   const app = await openApp({ local: store });
+  await app.tab('assets');
   const body = async () => app.page.textContent('body');
   let b = await body();
   t.ok(b.includes('سود واقعی دارایی‌ها'), 'کارت سود واقعی نمایش داده می‌شود');

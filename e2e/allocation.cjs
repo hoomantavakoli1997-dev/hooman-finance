@@ -15,6 +15,7 @@ const store = JSON.stringify({
 });
 (async () => {
   const app = await openApp({ local: store });
+  await app.tab('assets');
   const html = await app.page.content();
   t.ok(html.includes('ترکیب دارایی‌ها'), 'کارت ترکیب نمایش داده می‌شود');
   t.ok(await app.page.locator('svg.donut circle').count() === 3, 'یک حلقه‌ی پس‌زمینه + دو برش (نقد و طلا)');
