@@ -18,6 +18,7 @@ import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
 import { monthRange, monthReport, monthTitle, reportCsv, shiftMonth, txCsv } from '../src/core/report';
 import { AllocId, computeAllocation } from '../src/core/allocation';
+import { LoanMethod, LoanResult, computeLoan, impliedAnnualRate, validateLoan } from '../src/core/loan';
 import { GOLD_ID, PriceLog, USD_ID, computeRealReturn, logPrices, type Bench } from '../src/core/realreturn';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
@@ -1112,6 +1113,7 @@ function viewPeople(): string {
     <div class="actions">
       <button class="btn" data-action="new-debt" data-v="lent">به کسی پول دادم</button>
       <button class="btn" data-action="new-debt" data-v="borrowed">وام یا قرض گرفتم</button>
+      <button class="btn ghost" data-action="loan-open">ماشین‌حساب وام و قسط</button>
     </div>
     <div class="list">${rows || '<div class="empty">هنوز شخصی یا وامی ثبت نشده است.<br>مثلاً «به هومن ۱۰ میلیون قرض دادم» یا «وام بانک ۱۵ میلیون گرفتم».</div>'}</div>
     <div class="note info"><span>طلب‌ها، بدهی‌ها و چک‌های باز در «سرمایه‌ی خالص» صفحه‌ی خانه حساب می‌شوند: نقد + دارایی‌ها + طلب‌ها − بدهی‌ها. چک دریافتیِ برگشتی قابل‌وصول حساب نمی‌شود. با «وصول‌شده» کردن چک، مبلغ در نقد واریز یا برداشت می‌شود.</span></div>`;
@@ -1936,6 +1938,15 @@ function newIncomeForm(kind: IncomeKind = 'dividend'): IncomeForm {
   const from = jf(addDaysIso(todayIso(), -30));
   return { kind, y: t.y, m: t.m, d: t.d, amount: '', source: '', note: '', principal: '', rate: '', fy: from.y, fm: from.m, fd: from.d, error: '' };
 }
+interface LoanForm {
+  principal: string; rate: string; months: string; method: LoanMethod; fy: string; fm: string; fd: string;
+  /** اگر قسط را می‌دانید و نرخ را نمی‌دانید */
+  knownPay: string; error: string; result: LoanResult | null; implied: string;
+}
+function newLoanForm(): LoanForm {
+  const n = jf(addJalaliMonths(todayIso(), 1));
+  return { principal: '', rate: '', months: '', method: 'annuity', fy: n.y, fm: n.m, fd: n.d, knownPay: '', error: '', result: null, implied: '' };
+}
 interface PriceForm { assetId: string; price: string; error: string }
 interface AssetForm {
   name: string; unit: string; decimals: string; preset: string; error: string;
@@ -2183,6 +2194,7 @@ type Modal =
   | { kind: 'infl'; f: { v: string; error: string } }
   | { kind: 'income'; f: IncomeForm }
   | { kind: 'report'; f: { y: number; m: number } }
+  | { kind: 'loan'; f: LoanForm }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -2416,6 +2428,31 @@ function renderModal() {
         <button class="btn" data-action="recover-file">بازیابی از فایل پشتیبان</button>
         <button class="btn ghost bad" data-action="recover-empty">شروع با اطلاعات خالی</button>
       </div><input type="file" id="restore-file" hidden>`);
+    return;
+  }
+  if (modal.kind === 'loan') {
+    const f = modal.f;
+    const r = f.result;
+    const rows = r ? r.rows.map((x) => `<tr><td>${toFa(String(x.index))}</td><td>${x.date ? ltr(toFa(formatJalali(x.date))) : ''}</td><td>${money(x.payment, false)}</td><td>${money(x.interest, false)}</td><td>${money(x.principal, false)}</td><td>${money(x.balance, false)}</td></tr>`).join('') : '';
+    modalEl.innerHTML = sheet(`<h2>ماشین‌حساب وام و قسط</h2>
+      <div class="field"><span class="lab">روش محاسبه‌ی سود</span>${seg('loan-method', f.method, [['annuity', 'کاهشی (روی مانده)'], ['flat', 'ثابت (بانکی)']])}</div>
+      <div class="field"><label for="ln-p">مبلغ وام (${unitLabel()})</label><input id="ln-p" data-field="principal" inputmode="decimal" value="${esc(f.principal)}" autocomplete="off"></div>
+      <div class="field"><label for="ln-r">نرخ سود سالانه (درصد)</label><input id="ln-r" data-field="rate" inputmode="decimal" value="${esc(f.rate)}" autocomplete="off"></div>
+      <div class="field"><label for="ln-m">تعداد قسط (ماه)</label><input id="ln-m" data-field="months" inputmode="numeric" value="${esc(f.months)}" autocomplete="off"></div>
+      <div class="field"><span class="lab">تاریخ قسط اول (شمسی)</span>${dateFields(f.fy, f.fm, f.fd, ['ln-fy', 'ln-fm', 'ln-fd'], ['fy', 'fm', 'fd'])}</div>
+      <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
+      <div class="actions"><button class="btn" data-action="loan-calc">محاسبه</button></div>
+      ${r ? `<div class="tile">
+        <div class="between rr"><span>قسط ماهانه</span><b>${money(r.payment)}</b></div>
+        <div class="between rr"><span>مجموع بازپرداخت</span><b>${money(r.totalPaid)}</b></div>
+        <div class="between rr"><span>مجموع سود</span><b>${money(r.totalInterest)}</b></div></div>
+        <div class="tablewrap"><table class="loantbl"><thead><tr><th>#</th><th>تاریخ</th><th>قسط</th><th>سود</th><th>اصل</th><th>مانده</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="actions"><button class="btn" data-action="loan-save">ثبت در تعهدات</button></div>` : ''}
+      <div class="note info"><span><b>قسط را می‌دانید ولی نرخ را نه؟</b> مبلغ وام و تعداد قسط را بالا بنویسید، قسط ماهانه را اینجا بگذارید تا نرخ سالانه‌ی مؤثر (کاهشی) تقریب زده شود.</span>
+        <div class="field"><label for="ln-k">قسط ماهانه (${unitLabel()})</label><input id="ln-k" data-field="knownPay" inputmode="decimal" value="${esc(f.knownPay)}" autocomplete="off"></div>
+        <div class="actions"><button class="btn ghost" data-action="loan-rate">تخمین نرخ</button></div>
+        ${f.implied ? `<span><b>${esc(f.implied)}</b></span>` : ''}</div>
+      <div class="actions"><button class="btn ghost" data-action="close">بستن</button></div>`);
     return;
   }
   if (modal.kind === 'report') {
@@ -2855,6 +2892,64 @@ document.addEventListener('click', (ev) => {
       render();
       toast('قیمت روز ذخیره شد.');
       checkPriceAlerts();
+      break;
+    }
+    case 'loan-open':
+      modal = { kind: 'loan', f: newLoanForm() };
+      renderModal();
+      break;
+    case 'loan-method':
+      if (modal?.kind === 'loan') { modal.f.method = v === 'flat' ? 'flat' : 'annuity'; modal.f.result = null; renderModal(); }
+      break;
+    case 'loan-calc': {
+      if (modal?.kind !== 'loan') break;
+      const f = modal.f;
+      const pr = parseField('مبلغ وام', f.principal);
+      if (typeof pr === 'string') return setErr(pr);
+      const rt = parseField('نرخ سود', f.rate);
+      if (typeof rt === 'string') return setErr(rt);
+      const months = Number(toEn(f.months));
+      const principal = toRialDec(pr);
+      const bad = validateLoan(principal, rt, months);
+      if (bad) return setErr(bad);
+      const first = jalaliToIso(Number(toEn(f.fy)), Number(toEn(f.fm)), Number(toEn(f.fd))) ?? undefined;
+      f.result = computeLoan(principal, rt, months, f.method, first);
+      f.error = '';
+      renderModal();
+      break;
+    }
+    case 'loan-rate': {
+      if (modal?.kind !== 'loan') break;
+      const f = modal.f;
+      const pr = parseField('مبلغ وام', f.principal);
+      if (typeof pr === 'string') return setErr(pr);
+      const pay = parseField('قسط ماهانه', f.knownPay);
+      if (typeof pay === 'string') return setErr(pay);
+      const months = Number(toEn(f.months));
+      const rate = impliedAnnualRate(toRialDec(pr).toNumber(), toRialDec(pay).toNumber(), months);
+      f.error = '';
+      f.implied = rate === null ? 'با این اعداد نرخی پیدا نشد؛ مجموع اقساط باید کمتر از مبلغ وام نباشد.'
+        : `نرخ سالانه‌ی مؤثر تقریباً ${toFa(rate.toFixed(2)).replace('.', '٫')}٪ (روش کاهشی)`;
+      renderModal();
+      break;
+    }
+    case 'loan-save': {
+      if (modal?.kind !== 'loan' || !modal.f.result) break;
+      const f = modal.f;
+      const r = f.result!;
+      const d = newDebtForm('borrowed');
+      d.title = 'وام';
+      // بدهی با اقساط یعنی مجموع بازپرداخت (اصل + سود)، نه فقط مبلغ دریافتی
+      const owed = r.totalPaid.gte(r.payment.mul(r.rows.length)) ? r.totalPaid : r.payment.mul(r.rows.length);
+      d.amount = rialToField(owed.toString());
+      d.note = `وام ${money(toRialDec(parseField('مبلغ وام', f.principal) as Decimal), false)}؛ مبلغ ثبت‌شده مجموع بازپرداخت با سود است.`.replace(/<[^>]*>/g, '');
+      d.plan = true;
+      d.count = toFa(String(r.rows.length));
+      d.installment = rialToField(r.payment.toString());
+      d.every = '۱';
+      d.fy = f.fy; d.fm = f.fm; d.fd = f.fd;
+      modal = { kind: 'debt', f: d };
+      renderModal();
       break;
     }
     case 'report-open': {
