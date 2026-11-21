@@ -15,6 +15,7 @@ import {
 } from '../src/core/market';
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import sampleRaw from './market-sample.json';
+import { GOLD_ID, PriceLog, USD_ID, computeRealReturn, logPrices, type Bench } from '../src/core/realreturn';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
   DEFAULT_REMINDER_SETTINGS, LEAD_OPTIONS, PriceReminder, Reminder, ReminderEvent, ReminderSettings, activeEvents, addDaysIso,
@@ -31,6 +32,8 @@ type Tab = 'home' | 'assets' | 'txs' | 'people' | 'settings';
 interface Settings {
   /** پنهان کردن مبلغ‌ها (برای وقتی دیگران نگاه می‌کنند) */
   hide?: boolean;
+  /** نرخ تورم سالانه‌ی واردشده‌ی کاربر (٪)؛ تخمین دستی است */
+  inflation?: number;
   /** کلید قیمت‌های منتخب برای نمایش در خانه (اگر نباشد، فهرست پیش‌فرض) */
   favs?: string[];
   /** آخرین باری که فایل پشتیبان ساخته شد (ISO) */
@@ -64,6 +67,8 @@ interface Store {
   /** تاریخچه‌ی ارزش کل سرمایه؛ فقط از زمان نصب نسخه‌ی دارای این قابلیت ثبت می‌شود. */
   history?: HistoryPoint[];
   cheques?: Cheque[];
+  /** قیمت‌های خودکار روزانه‌ی دلار و طلا برای مقایسه‌ی سود واقعی */
+  priceLog?: PriceLog;
 }
 
 const KEY = 'hooman-finance-prototype-v1';
@@ -595,6 +600,7 @@ function viewHome(pf: Portfolio): string {
         : ''
     }
     ${marketSection()}
+    ${realReturnCard()}
     <div class="grid2">
       <div class="tile"><span class="k">سود یا زیان فروش‌ها (تحقق‌یافته)</span><span class="v">${pnl(pf.realizedTotal)}</span></div>
       <div class="tile"><span class="k">سود یا زیان دارایی‌های فعلی</span><span class="v">${pnl(pf.unrealizedTotal)}</span></div>
@@ -609,6 +615,36 @@ function viewHome(pf: Portfolio): string {
         ? '<div class="note info"><span>نسخه‌ی جدید برنامه آماده است.</span><button class="btn" data-action="update-install">دانلود و نصب</button></div>'
         : ''
     }`;
+}
+
+/* ------------------------------ سود واقعی ------------------------------ */
+
+function signedPct(r: Decimal): string {
+  const n = Number(r.mul(100).toFixed(1));
+  const txt = ltr((n > 0 ? '+' : n < 0 ? '−' : '') + toFa(Math.abs(n).toFixed(1)).replace('.', '٫') + '٪');
+  return `<b class="${n > 0 ? 'gain' : n < 0 ? 'loss' : ''}">${txt}</b>`;
+}
+
+function benchRow(label: string, b: Bench | null, none: string): string {
+  if (!b) return `<div class="between rr"><span>${label}</span><span class="muted">${none}</span></div>`;
+  const cov = b.coverage < 0.995 ? ` <span class="muted">(${toFa(String(Math.round(b.coverage * 100)))}٪ خریدها)</span>` : '';
+  return `<div class="between rr"><span>${label}${cov}</span><span>${signedPct(b.real)}</span></div>`;
+}
+
+function realReturnCard(): string {
+  if (store.sample) return '';
+  const infl = typeof store.settings.inflation === 'number' ? store.settings.inflation : null;
+  const r = computeRealReturn(store.assets.map((a) => a.id), store.txs, store.prices, store.priceLog ?? {}, todayIso(), infl);
+  if (!r) return '';
+  return `<section class="tile rrcard" aria-label="سود واقعی">
+    <h2 class="section-title">سود واقعی دارایی‌ها</h2>
+    <div class="between rr"><span>سود اسمی (نسبت به قیمت خرید)</span><span>${signedPct(r.nominal)}</span></div>
+    ${benchRow('نسبت به نگه‌داشتن دلار', r.usd, 'قیمت دلار برای تاریخ خریدها ثبت نشده')}
+    ${benchRow('نسبت به نگه‌داشتن طلا', r.gold, 'قیمت طلا برای تاریخ خریدها ثبت نشده')}
+    ${benchRow('نسبت به تورم', r.inflation, infl === null ? 'نرخ تورم وارد نشده' : '—')}
+    <span class="hint">مثبت یعنی بهتر از آن مرجع عمل کرده‌اید. قیمت دلار و طلا از زمان نصب هر روز که قیمت خودکار می‌آید ثبت می‌شود و قیمت تاریخی ساخته نمی‌شود؛ هر خریدی که قیمت مرجع نزدیکش (تا ۳۰ روز) نداشته باشد در آن مقایسه نمی‌آید. تورم تخمینی و بر پایه‌ی نرخ دستی شماست.</span>
+    <div class="actions"><button class="btn ghost" data-action="infl-open">${infl === null ? 'وارد کردن نرخ تورم' : `نرخ تورم: ${toFa(String(infl))}٪ (تغییر)`}</button></div>
+  </section>`;
 }
 
 /* ------------------------------ نمای بازار ------------------------------ */
@@ -863,6 +899,7 @@ const peopleData = (): PeopleData => ({ people: store.people, debts: store.debts
 /** ثبت ارزش واقعی سبد در لحظه‌ی تغییر؛ واریز/برداشت در ارزش کل دیده می‌شود و سود سرمایه‌گذاری محسوب نمی‌شود. */
 function recordHistory() {
   if (store.sample) return;
+  logPrices(store.priceLog ?? (store.priceLog = {}), [USD_ID, GOLD_ID], store.prices);
   try {
     const pf0 = computePortfolio(store.assets, store.txs, store.prices);
     const cash = pf0.cash;
@@ -2065,6 +2102,7 @@ type Modal =
   | { kind: 'recover' }
   | { kind: 'lock'; f: { mode: 'enable' | 'change' | 'disable'; kind: LockKind; stage: 'cur' | 'new' | 'confirm'; first: string; curOk: boolean; cur: string; pin: string; pin2: string; error: string; busy: boolean } }
   | { kind: 'rem'; f: RemForm }
+  | { kind: 'infl'; f: { v: string; error: string } }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -2298,6 +2336,17 @@ function renderModal() {
         <button class="btn" data-action="recover-file">بازیابی از فایل پشتیبان</button>
         <button class="btn ghost bad" data-action="recover-empty">شروع با اطلاعات خالی</button>
       </div><input type="file" id="restore-file" hidden>`);
+    return;
+  }
+  if (modal.kind === 'infl') {
+    modalEl.innerHTML = sheet(`<h2>نرخ تورم سالانه</h2>
+      <div class="field"><label for="i-v">نرخ تورم سالانه (درصد)</label>
+        <input id="i-v" data-field="v" inputmode="decimal" value="${esc(modal.f.v)}" autocomplete="off">
+        <span class="hint">این عدد را خودتان از منبع معتبر (مثلاً مرکز آمار یا بانک مرکزی) وارد می‌کنید؛ برنامه آن را حدس نمی‌زند.</span></div>
+      <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
+      <div class="actions"><button class="btn" data-action="infl-save">ذخیره</button>
+        ${typeof store.settings.inflation === 'number' ? '<button class="btn ghost" data-action="infl-clear">حذف نرخ</button>' : ''}
+        <button class="btn ghost" data-action="close">انصراف</button></div>`);
     return;
   }
   if (modal.kind === 'tx') {
@@ -2677,6 +2726,22 @@ document.addEventListener('click', (ev) => {
       checkPriceAlerts();
       break;
     }
+    case 'infl-open':
+      modal = { kind: 'infl', f: { v: typeof store.settings.inflation === 'number' ? String(store.settings.inflation) : '', error: '' } };
+      renderModal();
+      break;
+    case 'infl-save': {
+      if (modal?.kind !== 'infl') break;
+      const n = Number(toEn(modal.f.v));
+      if (!modal.f.v.trim() || !Number.isFinite(n) || n < 0 || n > 1000) return setErr('یک درصد معتبر بین ۰ تا ۱۰۰۰ وارد کنید.');
+      store.settings.inflation = n;
+      save(); closeModal(); render();
+      break;
+    }
+    case 'infl-clear':
+      delete store.settings.inflation;
+      save(); closeModal(); render();
+      break;
     case 'price-clear':
       if (modal?.kind === 'price') {
         delete store.prices[modal.f.assetId];
