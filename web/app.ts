@@ -6,7 +6,7 @@ import {
   ChangeResult, Portfolio, TxDraft, parseDec,
 } from '../src/core/engine';
 import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
-import { Cheque, CheckDirection, CheckStatus, chequeCashDraft, chequeDue, chequeTotals, duplicateCheque, sortCheques, validateCheque } from '../src/core/checks';
+import { Cheque, CheckDirection, CheckStatus, chequeCashDraft, chequeOutstanding, chequeDue, chequeTotals, duplicateCheque, sortCheques, validateCheque } from '../src/core/checks';
 import { assetIcon, iconKind, iconSvg, marketIcon } from './icons';
 import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
 import { DEFAULT_PRICE_KEYS, PriceResult, TGJU_URL, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
@@ -16,6 +16,7 @@ import {
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
+import { FamilyItem, FamilyOpts, familyReportText } from '../src/core/familyreport';
 import { monthRange, monthReport, monthTitle, reportCsv, shiftMonth, txCsv } from '../src/core/report';
 import { AllocId, computeAllocation } from '../src/core/allocation';
 import { LoanMethod, LoanResult, computeLoan, impliedAnnualRate, validateLoan } from '../src/core/loan';
@@ -664,6 +665,29 @@ function incomeTile(): string {
   return `<div class="tile"><span class="k">سود دریافتی در ۳۶۵ روز اخیر</span>
     <span class="v">${hidden() ? MASK : money(t.total)}</span>
     <div class="mini">${part('سود سهام', t.dividend)}${part('سود سپرده', t.deposit)}${part('سود روزشمار', t.accrual)}</div></div>`;
+}
+
+/* ------------------------------ گزارش خانواده ------------------------------ */
+
+function familyText(o: FamilyOpts): string {
+  const today = todayIso();
+  const pf = computePortfolio(store.assets, store.txs, store.prices);
+  const assetsValue = pf.assets.reduce((sum, a) => (a.value ? sum.plus(a.value) : sum), Decimal.ZERO);
+  const worth = netWorth(pf.cash, assetsValue, peopleWithCheques());
+  const items: FamilyItem[] = [];
+  for (const e of installmentEvents(store.debts, store.payments, personNameOf, remSettings(), today, 30)) {
+    if (e.kind !== 'installment' || !e.amount) continue;
+    const debt = store.debts.find((d) => e.id.startsWith(`inst:${d.id}:`));
+    items.push({ kind: debt?.direction === 'lent' ? 'installment-in' : 'installment-out', label: e.title, due: e.dueDate, amount: Decimal.of(e.amount) });
+  }
+  for (const c of store.cheques ?? []) {
+    if (!chequeOutstanding(c)) continue;
+    items.push({ kind: c.direction === 'received' ? 'cheque-in' : 'cheque-out', label: `چک ${c.accountHolder}`, due: c.dueDate, amount: Decimal.of(c.amount) });
+  }
+  return toFa(familyReportText({
+    dateLabel: toFa(formatJalali(today)), worth, alloc: computeAllocation(pf), items, today,
+    fmtMoney: (d) => `${fmtNum(fromRial(d))} ${unitLabel()}`, fmtDate: (iso) => toFa(formatJalali(iso)), opts: o,
+  }));
 }
 
 /* ------------------------------ سود واقعی ------------------------------ */
@@ -1847,6 +1871,9 @@ function viewSettings(): string {
     <h2 class="section-title">گزارش و خروجی</h2>
     <div class="note info"><span>گزارش هر ماه شمسی و فایل CSV برای Excel. این فایل رمز ندارد؛ فقط برای کسی بفرستید که به آن اعتماد دارید.</span>
       <div class="actions"><button class="btn" data-action="report-open">گزارش ماهانه و خروجی</button></div></div>
+    <h2 class="section-title">گزارش برای خانواده</h2>
+    <div class="note info"><span>یک خلاصه‌ی متنی و فقط‌خواندنی برای فرستادن به همسر یا فرزند. پیش‌فرض بدون مبلغ و بدون نام است و شما تعیین می‌کنید چه چیزی در آن بیاید.</span>
+      <div class="actions"><button class="btn" data-action="family-open">ساخت گزارش خانواده</button></div></div>
     <h2 class="section-title">پشتیبان‌گیری</h2>
     <div class="note info"><span>${backupInfoHtml()}</span>
       <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
@@ -2198,6 +2225,7 @@ type Modal =
   | { kind: 'infl'; f: { v: string; error: string } }
   | { kind: 'income'; f: IncomeForm }
   | { kind: 'report'; f: { y: number; m: number } }
+  | { kind: 'family'; f: FamilyOpts }
   | { kind: 'loan'; f: LoanForm }
   | { kind: 'onboard'; f: { step: number } }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
@@ -2487,6 +2515,18 @@ function renderModal() {
         <div class="actions"><button class="btn ghost" data-action="loan-rate">تخمین نرخ</button></div>
         ${f.implied ? `<span><b>${esc(f.implied)}</b></span>` : ''}</div>
       <div class="actions"><button class="btn ghost" data-action="close">بستن</button></div>`);
+    return;
+  }
+  if (modal.kind === 'family') {
+    const f = modal.f;
+    modalEl.innerHTML = sheet(`<h2>گزارش برای خانواده</h2>
+      <label class="check"><input type="checkbox" data-field="amounts" ${f.amounts ? 'checked' : ''}><span>مبلغ‌ها نمایش داده شود</span></label>
+      <label class="check"><input type="checkbox" data-field="names" ${f.names ? 'checked' : ''}><span>نام اشخاص و صاحبان چک نمایش داده شود</span></label>
+      <label class="check"><input type="checkbox" data-field="commitments" ${f.commitments ? 'checked' : ''}><span>قسط‌ها و چک‌های ۳۰ روز آینده</span></label>
+      <pre class="famprev" id="fam-prev" dir="rtl">${esc(familyText(f))}</pre>
+      <div class="actions"><button class="btn" data-action="family-share">ارسال گزارش</button>
+        <button class="btn ghost" data-action="family-copy">کپی متن</button>
+        <button class="btn ghost" data-action="close">بستن</button></div>`);
     return;
   }
   if (modal.kind === 'report') {
@@ -3000,6 +3040,19 @@ document.addEventListener('click', (ev) => {
       renderModal();
       break;
     }
+    case 'family-open':
+      modal = { kind: 'family', f: { amounts: false, names: false, commitments: true } };
+      renderModal();
+      break;
+    case 'family-share':
+      if (modal?.kind === 'family') exportFile(`dara-family-${todayIso()}.txt`, familyText(modal.f), 'text/plain');
+      break;
+    case 'family-copy':
+      if (modal?.kind === 'family') {
+        const text = familyText(modal.f);
+        void navigator.clipboard?.writeText(text).then(() => toast('متن گزارش کپی شد.'), () => toast('کپی ممکن نشد.'));
+      }
+      break;
     case 'report-open': {
       const j = isoToJalali(todayIso())!;
       modal = { kind: 'report', f: { y: j.y, m: j.m } };
@@ -3691,7 +3744,7 @@ document.addEventListener('input', (ev) => {
   if (!field || !modal || modal.kind === 'recover' || modal.kind === 'ask' || modal.kind === 'prices' || modal.kind === 'quote') return;
   if (t.type === 'checkbox') {
     (modal.f as unknown as Record<string, boolean>)[field] = t.checked;
-    if (field === 'plan') renderModal();
+    if (field === 'plan' || modal.kind === 'family') renderModal();
     return;
   }
   (modal.f as unknown as Record<string, string>)[field] = t.value;
