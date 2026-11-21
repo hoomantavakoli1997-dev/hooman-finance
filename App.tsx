@@ -10,6 +10,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import appHtml from './src/native/appHtml';
 import { requestWidgetUpdate } from 'react-native-android-widget';
 import { renderMarketWidget, writeWidgetConfig } from './widget/widget-task-handler';
+import { ensureBgTask, syncBgAlerts } from './bg/alerts-task';
 import { sanitizeConfig } from './src/native/widgetData';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
@@ -227,7 +228,7 @@ export default function App() {
 
   const onMessage = useCallback(
     async (ev: WebViewMessageEvent) => {
-      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; widget?: unknown; mime?: string; notes?: { id: string; title: string; body: string; at: number }[] };
+      let msg: { type?: string; id?: string; url?: string; name?: string; text?: string; purpose?: string; title?: string; body?: string; ask?: boolean; snapshot?: string; ack?: number; widget?: unknown; bg?: unknown; mime?: string; notes?: { id: string; title: string; body: string; at: number }[] };
       try {
         msg = JSON.parse(ev.nativeEvent.data);
       } catch {
@@ -243,6 +244,20 @@ export default function App() {
           // Keep localStorage intact; the UI must remain usable if SQLite is unavailable.
           if (typeof msg.ack === 'number') call('__encAck', msg.ack, false);
         });
+        return;
+      }
+      if (msg.type === 'bg-alerts') {
+        // هشدارهای قیمت برای بررسی در پس‌زمینه؛ فعال‌شده‌ها به برنامه برمی‌گردند تا اعلان دوباره نیاید
+        void (async () => {
+          try {
+            const r = await syncBgAlerts(msg.bg);
+            if (!r) return;
+            await ensureBgTask(r.active);
+            if (r.fired.length) call('__bgFired', r.fired);
+          } catch {
+            // بررسی پس‌زمینه اختیاری است
+          }
+        })();
         return;
       }
       if (msg.type === 'widget-config') {

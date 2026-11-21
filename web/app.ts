@@ -9,13 +9,14 @@ import { Asset, CASH_ID, PriceEntry, Tx, TxType } from '../src/core/types';
 import { Cheque, CheckDirection, CheckStatus, chequeCashDraft, chequeOutstanding, chequeDue, chequeTotals, duplicateCheque, sortCheques, validateCheque } from '../src/core/checks';
 import { assetIcon, iconKind, iconSvg, marketIcon } from './icons';
 import { InstrumentHit, isInsCode, parseClosingInfo, parseSearch, quoteUrl, searchUrl, tsetmcProvider } from '../src/core/tsetmc';
-import { DEFAULT_PRICE_KEYS, PriceResult, TGJU_URL, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
+import { DEFAULT_PRICE_KEYS, PriceResult, priceKeyFor, TGJU_URL, applyQuotes, parseTgju, refreshPrices, tgjuProvider } from '../src/core/prices';
 import {
   CATEGORIES, CategoryId, MarketEntry, classify, isStale, parseMarket, searchMarket, snapshotTime,
 } from '../src/core/market';
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
 import { esc, fmtNum, toEn, toFa } from './format';
 import { buildRows } from '../src/native/widgetData';
+import type { BgAlert } from '../src/native/bgAlerts';
 import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
 import { FamilyItem, FamilyOpts, familyReportText } from '../src/core/familyreport';
@@ -267,6 +268,7 @@ function save() {
   }
   scheduleNoteSync();
   widgetSync();
+  bgAlertsSync();
 }
 
 /** پیکربندی و آخرین قیمت‌ها را برای ویجت صفحه‌ی اصلی گوشی می‌فرستد (فقط داخل اپ) */
@@ -1955,6 +1957,7 @@ function viewSettings(): string {
     <h2 class="section-title">پشتیبانی</h2>
     <div class="note info">
       <span>برای پرسش، گزارش خطا یا پیشنهاد، در تلگرام پیام بدهید:</span>
+      <b dir="ltr" style="font-size:1.1rem;user-select:all">${SUPPORT_ID}</b>
       <div class="actions">
         <a class="btn" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer" data-action="support-open">باز کردن تلگرام</a>
         <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
@@ -2141,6 +2144,26 @@ function checkPriceAlerts() {
   }
 }
 
+/** هشدارهای قیمت فعال را برای بررسی در پس‌زمینه (وقتی برنامه بسته است) به بخش بومی می‌دهد */
+let bgTimer: number | undefined;
+function bgAlertsSync() {
+  if (!inApp() || secureMode && !secureKey) return;
+  window.clearTimeout(bgTimer);
+  bgTimer = window.setTimeout(() => {
+    const alerts: BgAlert[] = [];
+    for (const r of remList()) {
+      if (r.kind !== 'price' || r.firedAt) continue;
+      const asset = store.assets.find((a) => a.id === r.assetId);
+      if (!asset) continue;
+      const tg = priceKeyFor(asset, 'tgju');
+      const ts = asset.priceKeys?.tsetmc;
+      const src = tg ? { provider: 'tgju' as const, key: tg } : ts ? { provider: 'tsetmc' as const, key: ts } : null;
+      if (src) alerts.push({ id: r.id, assetName: asset.name, side: r.side, cond: r.cond, target: r.target, ...src });
+    }
+    toNative({ type: 'bg-alerts', bg: { alerts, unit: isToman() ? 'toman' : 'rial', fired: [] } });
+  }, 1000);
+}
+
 let noteTimer = 0;
 function scheduleNoteSync() {
   if (!inApp()) return;
@@ -2202,7 +2225,7 @@ function remModalHtml(f: RemForm): string {
       <div class="field"><span class="lab">وقتی قیمت…</span>${seg('rem-cond', f.cond, [['above', 'بالاتر رفت'], ['below', 'پایین‌تر آمد']])}</div>
       <div class="field"><label for="r-target">قیمت هدف هر واحد (${unitLabel()})</label>
         <input id="r-target" data-field="target" inputmode="decimal" value="${esc(f.target)}" autocomplete="off"></div>
-      <div class="note info"><span>هشدار قیمت پس از دریافت قیمت تازه یا باز شدن برنامه بررسی می‌شود. قیمت‌های قدیمی‌تر از ۳ روز برای فعال‌کردن هشدار معتبر نیستند؛ دریافت پیوسته‌ی قیمت در پس‌زمینه انجام نمی‌شود.</span></div>
+      <div class="note info"><span>هشدار قیمت هنگام باز بودن برنامه و پس از دریافت قیمت تازه بررسی می‌شود. وقتی برنامه بسته است، اندروید خودش گاهی (حدود هر ربع‌ساعت یا دیرتر، و با «صرفه‌جویی باتری» ممکن است خیلی دیرتر) برنامه را برای بررسی بیدار می‌کند؛ پس اعلان ممکن است با تأخیر برسد. فقط برای دارایی‌هایی کار می‌کند که قیمت خودکار (طلا، دلار، تتر، سهام متصل به بورس) دارند. قیمت‌های قدیمی‌تر از ۳ روز هرگز هشدار نمی‌دهند.</span></div>
       <div class="err" id="ferr" role="alert">${esc(f.error)}</div>
       <div class="actions"><button class="btn" data-action="rem-save-price">ذخیره</button><button class="btn ghost" data-action="rem-back">بازگشت</button></div>`);
   }
@@ -3501,8 +3524,8 @@ document.addEventListener('click', (ev) => {
     case 'support-copy':
       navigator.clipboard?.writeText(SUPPORT_ID).then(
         () => toast('شناسه کپی شد.'),
-        () => toast('کپی ممکن نشد؛ دکمه‌ی «باز کردن تلگرام» را بزنید.'),
-      ) ?? toast('کپی ممکن نشد؛ دکمه‌ی «باز کردن تلگرام» را بزنید.');
+        () => toast(`شناسه‌ی پشتیبانی: ${SUPPORT_ID}`),
+      ) ?? toast(`شناسه‌ی پشتیبانی: ${SUPPORT_ID}`);
       break;
     case 'update-check':
       checkUpdate();
@@ -3711,6 +3734,19 @@ function checkUpdate() {
   if (view.tab === 'settings') render();
 }
 Object.assign(window, {
+  __bgFired: (ids: unknown) => {
+    // اعلان را پس‌زمینه داده است؛ اینجا فقط وضعیت «فعال‌شده» ثبت می‌شود
+    if (!Array.isArray(ids)) return;
+    let n = 0;
+    for (const r of remList()) {
+      if (r.kind === 'price' && !r.firedAt && ids.includes(r.id)) { r.firedAt = new Date().toISOString(); r.seen = false; n += 1; }
+    }
+    if (n) {
+      save();
+      if (!modal) render();
+      toast(`${toFa(String(n))} هشدار قیمت وقتی برنامه بسته بود فعال شد. زنگوله را بزنید.`);
+    }
+  },
   __encAck: (_id: number, ok: boolean) => {
     // متن ساده فقط بعد از تأیید ذخیره‌ی نسخه‌ی رمزشده پاک می‌شود
     if (!ok || !plainPending) return;
@@ -3945,6 +3981,7 @@ function startup() {
   checkPriceAlerts();
   scheduleNoteSync();
   widgetSync();
+  bgAlertsSync();
   renderLock();
 }
 
