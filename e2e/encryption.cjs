@@ -21,7 +21,14 @@ const plain = JSON.stringify({ v: 1, sample: false, assets: [{ id: 'a1', name: N
   await app.tab('assets');
   t.ok((await app.page.content()).includes(NAME), 'مهاجرت: داده در رابط نمایش داده می‌شود');
   await app.tab('settings');
-  t.ok((await app.page.textContent('body')).includes('AES-256'), 'تنظیمات: وضعیت رمزنگاری نمایش داده می‌شود');
+  t.ok(!(await app.page.innerText('#app')).includes('AES-256'), 'تنظیمات: دیگر بخش توضیحی رمزنگاری ندارد');
+  await app.act('onboard-open');
+  let found = false;
+  for (let i = 0; i < 12 && !found; i++) {
+    found = (await app.page.innerText('body')).includes('AES-256');
+    if (!found) { if (await app.page.locator('[data-action="onboard-next"]').count() === 0) break; await app.act('onboard-next'); }
+  }
+  t.ok(found, 'راهنمای برنامه: توضیح رمزنگاری هست');
   t.ok(app.errors.length === 0, 'بدون خطای جاوااسکریپت: ' + app.errors.join('|'));
   await app.close();
 

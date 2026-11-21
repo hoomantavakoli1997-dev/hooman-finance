@@ -215,18 +215,27 @@ function load(): Store {
 let store: Store = load();
 let lastSaveWarn = 0;
 
-let secTimer: number | undefined;
 let secBusy = false;
 let secDirty = false;
 let secAck = 0;
-function queueSecureSave(now = false) {
+/** ذخیره‌ی رمزشده بلافاصله و پشت‌سرهم انجام می‌شود (تأخیر نمی‌گذاریم تا بستن ناگهانی برنامه چیزی را از بین نبرد) */
+function queueSecureSave(_now = false) {
   secDirty = true;
-  window.clearTimeout(secTimer);
-  if (now) void flushSecure();
-  else secTimer = window.setTimeout(() => void flushSecure(), 250);
+  void flushSecure();
+}
+/** بعد از تأیید بخش بومی که نسخه‌ی رمزشده روی گوشی نوشته شد، cb اجرا می‌شود؛ وگرنه onFail */
+const ackWaiters: { id: number; ok: () => void; fail: () => void; timer: number }[] = [];
+let ackFails = 0;
+function whenPersisted(ok: () => void, fail: () => void) {
+  void flushSecure().then(() => {
+    const w = { id: secAck, ok, fail, timer: window.setTimeout(() => {
+      const i = ackWaiters.indexOf(w);
+      if (i >= 0) { ackWaiters.splice(i, 1); fail(); }
+    }, 8000) };
+    ackWaiters.push(w);
+  });
 }
 async function flushSecure() {
-  window.clearTimeout(secTimer);
   if (secBusy || !secureKey || writesBlocked) return;
   secBusy = true;
   try {
@@ -1647,7 +1656,14 @@ function restoreApply() {
   save();
   closeModal();
   render();
-  toast('اطلاعات از پشتیبان بازیابی شد.');
+  if (secureMode && secureKey) {
+    // تا نوشته‌شدن واقعی روی گوشی «بازیابی شد» نمی‌گوییم
+    toast('در حال ذخیره‌ی اطلاعات بازیابی‌شده… برنامه را نبندید.');
+    whenPersisted(
+      () => toast('اطلاعات از پشتیبان بازیابی و روی گوشی ذخیره شد.'),
+      () => toast('ذخیره‌ی اطلاعات بازیابی‌شده روی گوشی تأیید نشد. برنامه را نبندید و دوباره «بازیابی» را بزنید.'),
+    );
+  } else toast('اطلاعات از پشتیبان بازیابی شد.');
 }
 
 /* ------------------------------ قفل برنامه ------------------------------ */
@@ -1852,17 +1868,6 @@ function widgetSection(): string {
     </div>`;
 }
 
-function encSection(): string {
-  if (!inApp()) return '';
-  const on = secureMode && !!secureKey && !plainPending;
-  const wait = secureMode && !!secureKey && plainPending;
-  return `<h2 class="section-title">رمزنگاری اطلاعات</h2>
-    <div class="note ${on ? 'info' : 'warn'}"><span>${on
-      ? 'اطلاعات روی گوشی رمزنگاری‌شده ذخیره می‌شود (AES-256). کلید در بخش امن خود گوشی است و از آن بیرون نمی‌آید. اگر برنامه را پاک کنید یا گوشی را عوض کنید، فقط از «فایل پشتیبان» می‌توانید اطلاعات را برگردانید؛ پس پشتیبان بگیرید.'
-      : wait ? 'در حال رمزنگاری اطلاعات…'
-      : 'رمزنگاری روی این گوشی فعال نیست و اطلاعات به‌صورت معمولی نگه‌داری می‌شود.'}</span></div>`;
-}
-
 function disableLock() {
   delete store.settings.lock;
   save(); closeModal(); render(); renderLock();
@@ -1926,7 +1931,6 @@ function viewSettings(): string {
     <div class="field"><span class="lab">اندازه‌ی نوشته‌ها</span>${seg('set-font', s.font, [['small', 'کوچک'], ['normal', 'معمولی'], ['large', 'بزرگ']])}</div>
     <div class="set-group"><span class="n">۲</span><div><b>امنیت و اطلاعات</b><span>قفل، رمزنگاری و پشتیبان‌گیری</span></div></div>
     ${lockSection()}
-    ${encSection()}
     <h2 class="section-title">پشتیبان‌گیری</h2>
     <div class="note info"><span>${backupInfoHtml()}</span>
       <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
@@ -2355,7 +2359,8 @@ const ONBOARD: { title: string; body: string; icon: string }[] = [
   { icon: '⑤', title: 'اشخاص، وام و چک', body: 'در تب «اشخاص» قرض‌ها، وام‌ها و اقساط را ثبت کنید و پرداخت هر قسط را بزنید. چک‌های دریافتی و پرداختی با سررسید ثبت می‌شوند و در سرمایه‌ی خالص حساب می‌شوند. ماشین‌حساب وام هم قسط ماهانه را برایتان حساب می‌کند.' },
   { icon: '⑥', title: 'یادآور و اعلان', body: 'از زنگ بالای خانه، یادآور سررسید قسط و چک، یادآور تاریخ دلخواه و هشدار قیمت خرید یا فروش بسازید. اعلان‌ها را در تنظیمات گوشی اجازه دهید. هشدار قیمت وقتی بررسی می‌شود که برنامه باز باشد یا قیمت‌ها به‌روز شوند.' },
   { icon: '⑦', title: 'گزارش، خروجی و ویجت', body: 'از «تنظیمات» گزارش ماهانه و خروجی Excel بگیرید یا خلاصه‌ی فقط‌خواندنی (بدون مبلغ و نام، مگر خودتان بخواهید) برای خانواده بفرستید. ویجت «دارا — قیمت‌های بازار» را هم می‌توانید روی صفحه‌ی اصلی گوشی بگذارید.' },
-  { icon: '⑧', title: 'اطلاعات را امن نگه دارید', body: 'در «تنظیمات» قفل رمز، الگو یا اثر انگشت بگذارید و حتماً پشتیبان بگیرید. چون اطلاعات رمزنگاری‌شده روی گوشی است، اگر برنامه پاک شود یا گوشی عوض شود فقط فایل پشتیبان آن را برمی‌گرداند. پشتیبان را جایی امن نگه دارید.' },
+  { icon: '⑧', title: 'رمزنگاری اطلاعات', body: 'در نسخه‌ی اندروید، اطلاعات مالی شما قبل از ذخیره روی گوشی رمزنگاری می‌شود (AES-256). کلید رمزنگاری به‌صورت تصادفی ساخته و در بخش امن خود گوشی (Android Keystore) نگه‌داری می‌شود و از آن بیرون نمی‌آید؛ پس کسی که فایل‌های برنامه را از گوشی بردارد چیزی نمی‌خواند. این کار خودکار است و تنظیمی ندارد. نکته‌ی مهم: چون کلید فقط داخل همین گوشی است، اگر برنامه را پاک کنید یا گوشی را عوض کنید، فقط فایل پشتیبان اطلاعات را برمی‌گرداند. نسخه‌ی وب (مرورگر) رمزنگاری ندارد و فقط ظاهر و کارکردش یکی است.' },
+  { icon: '⑨', title: 'اطلاعات را امن نگه دارید', body: 'در «تنظیمات» قفل رمز، الگو یا اثر انگشت بگذارید و حتماً پشتیبان بگیرید. چون اطلاعات رمزنگاری‌شده روی گوشی است، اگر برنامه پاک شود یا گوشی عوض شود فقط فایل پشتیبان آن را برمی‌گرداند. پشتیبان را جایی امن نگه دارید.' },
 ];
 
 function finishOnboard() {
@@ -3747,9 +3752,21 @@ Object.assign(window, {
       toast(`${toFa(String(n))} هشدار قیمت وقتی برنامه بسته بود فعال شد. زنگوله را بزنید.`);
     }
   },
-  __encAck: (_id: number, ok: boolean) => {
+  __encAck: (id: number, ok: boolean) => {
+    if (!ok) {
+      // نوشتن روی گوشی انجام نشد: به کاربر گفته می‌شود و چند بار دوباره تلاش می‌کنیم
+      ackFails += 1;
+      toast('ذخیره‌ی اطلاعات روی گوشی انجام نشد. دوباره تلاش می‌شود؛ اگر تکرار شد پشتیبان بگیرید.');
+      if (ackFails <= 5) { secDirty = true; window.setTimeout(() => void flushSecure(), 1500); }
+      for (const w of ackWaiters.splice(0)) { window.clearTimeout(w.timer); w.fail(); }
+      return;
+    }
+    ackFails = 0;
+    for (let i = ackWaiters.length - 1; i >= 0; i--) {
+      if (ackWaiters[i].id <= id) { const [w] = ackWaiters.splice(i, 1); window.clearTimeout(w.timer); w.ok(); }
+    }
     // متن ساده فقط بعد از تأیید ذخیره‌ی نسخه‌ی رمزشده پاک می‌شود
-    if (!ok || !plainPending) return;
+    if (!plainPending) return;
     plainPending = false;
     try { localStorage.removeItem(KEY); } catch { /* ignore */ }
     if (view.tab === 'settings') render();

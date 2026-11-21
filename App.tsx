@@ -48,10 +48,11 @@ async function ensureChannel() {
  * اگر ساخته یا خوانده نشود null برمی‌گردد و برنامه مثل قبل بدون رمزنگاری کار می‌کند.
  */
 const DATA_KEY_NAME = 'dara-data-key-v1';
-async function loadDataKey(): Promise<string | null> {
+async function loadDataKey(allowCreate: boolean): Promise<string | null> {
   try {
     const old = await SecureStore.getItemAsync(DATA_KEY_NAME);
     if (old && /^[0-9a-f]{64}$/.test(old)) return old;
+    if (!allowCreate) return null;
     const bytes = await Crypto.getRandomBytesAsync(32);
     const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
     await SecureStore.setItemAsync(DATA_KEY_NAME, hex);
@@ -72,13 +73,14 @@ export default function App() {
     let active = true;
     void (async () => {
       try {
-        const k = await loadDataKey();
-        if (active) setDataKey(k);
         await initializeDatabase();
-        if (await checkDatabaseIntegrity()) {
-          const snapshot = await readSnapshot();
-          if (active && snapshot) setSqliteSnapshot(JSON.stringify(snapshot));
-        }
+        let snapshot: Awaited<ReturnType<typeof readSnapshot>> = null;
+        if (await checkDatabaseIntegrity()) snapshot = await readSnapshot();
+        // اگر داده‌ی رمزشده هست ولی کلید گم شده، کلید تازه نمی‌سازیم (کلید تازه داده‌ی قدیمی را برای همیشه ناخوانا می‌کرد)
+        const encrypted = !!snapshot && (snapshot as { enc?: unknown }).enc === 1;
+        const k = await loadDataKey(!encrypted);
+        if (active) setDataKey(k);
+        if (active && snapshot) setSqliteSnapshot(JSON.stringify(snapshot));
       } catch {
         // SQLite is a secondary mirror in this rollout; legacy WebView storage remains available.
       } finally {
@@ -239,7 +241,12 @@ export default function App() {
         sqliteWriteQueue.current = sqliteWriteQueue.current.then(async () => {
           const snapshot = JSON.parse(msg.snapshot!) as DaraSnapshot;
           await writeSnapshot(snapshot);
-          if (typeof msg.ack === 'number') call('__encAck', msg.ack, true);
+          if (typeof msg.ack === 'number') {
+            // تأیید فقط وقتی داده‌ی نوشته‌شده واقعاً دوباره خوانده و با ورودی برابر دیده شد
+            const back = await readSnapshot();
+            if (!back || JSON.stringify(back) !== JSON.stringify(snapshot)) throw new Error('read-back mismatch');
+            call('__encAck', msg.ack, true);
+          }
         }).catch(() => {
           // Keep localStorage intact; the UI must remain usable if SQLite is unavailable.
           if (typeof msg.ack === 'number') call('__encAck', msg.ack, false);

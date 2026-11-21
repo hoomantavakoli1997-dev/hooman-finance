@@ -11,6 +11,7 @@
  * its migration tests are in place.
  */
 import * as SQLite from 'expo-sqlite';
+import { isIntegrityOk } from './integrity';
 
 const DATABASE_NAME = 'dara.db';
 const SNAPSHOT_ID = 1;
@@ -155,6 +156,6 @@ export async function writeSnapshot(snapshot: DaraSnapshot | EncryptedEnvelope):
 /** SQLite's built-in integrity check; callers should surface a failure to the user. */
 export async function checkDatabaseIntegrity(): Promise<boolean> {
   const connection = await db();
-  const result = await connection.getFirstAsync<{ integrity_check: string }>('PRAGMA quick_check');
-  return result?.integrity_check === 'ok';
+  const result = await connection.getFirstAsync<Record<string, unknown>>('PRAGMA quick_check');
+  return isIntegrityOk(result);
 }
