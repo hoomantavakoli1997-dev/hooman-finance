@@ -325,7 +325,7 @@ const view = {
   tab: 'home' as Tab, assetId: null as string | null, search: '', filter: 'all' as string,
   person: null as string | null,
   market: false, mcat: 'all' as CategoryId | 'all', mq: '', mstale: false,
-  historyRange: '1m' as '1w' | '1m' | '3m' | '6m' | '1y' | 'all',
+  historyRange: '1m' as '1d' | '1w' | '1m' | '3m' | '6m' | '1y' | 'all',
 };
 
 const assetById = (id: string) => store.assets.find((a) => a.id === id);
@@ -403,12 +403,45 @@ function pctText(p: number): string {
   return toFa(p.toFixed(1)).replace('.', '٫') + '٪';
 }
 
-const RANGES: [string, string][] = [['1w', '۱ هفته'], ['1m', '۱ ماه'], ['3m', '۳ ماه'], ['6m', '۶ ماه'], ['1y', '۱ سال'], ['all', 'همه']];
+const RANGES: [string, string][] = [['1d', '۱ روز'], ['1w', '۱ هفته'], ['1m', '۱ ماه'], ['3m', '۳ ماه'], ['6m', '۶ ماه'], ['1y', '۱ سال'], ['all', 'همه']];
 
 /** نمودار کوچک روند سرمایه برای داخل کارت اصلی خانه */
+/** نقاط نمودار روند که الان روی صفحه است (برای انتخاب با لمس) */
+let sparkPts: { at: string; value: string }[] = [];
+
+function sparkSelect(svg: SVGSVGElement, clientX: number) {
+  const n = sparkPts.length;
+  if (n < 2) return;
+  const r = svg.getBoundingClientRect();
+  if (!r.width) return;
+  const vx = ((clientX - r.left) / r.width) * 320;
+  const i = Math.max(0, Math.min(n - 1, Math.round(((vx - 6) / 308) * (n - 1))));
+  const vals = sparkPts.map((p) => Number(p.value));
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = max - min || Math.max(Math.abs(max) * 0.02, 1);
+  const x = 6 + (i / (n - 1)) * 308;
+  const y = 46 - ((vals[i] - min) / span) * 38;
+  const line = document.getElementById('sp-line');
+  const dot = document.getElementById('sp-dot');
+  if (line) { line.setAttribute('x1', x.toFixed(1)); line.setAttribute('x2', x.toFixed(1)); line.setAttribute('visibility', 'visible'); }
+  if (dot) { dot.setAttribute('cx', x.toFixed(1)); dot.setAttribute('cy', y.toFixed(1)); dot.setAttribute('visibility', 'visible'); }
+  const cur = Decimal.parse(sparkPts[i].value);
+  let txt = `<b>${stamp(sparkPts[i].at)}</b> · سرمایه <b>${money(cur)}</b>`;
+  if (i > 0) {
+    const prev = Decimal.parse(sparkPts[i - 1].value);
+    const d = cur.minus(prev);
+    const pct = prev.isZero() ? '' : ` ${signedPct(d.div(prev))}`;
+    txt += `<br>تغییر نسبت به نقطه‌ی قبل: <span class="${d.gt(0) ? 'gain' : d.isNegative() ? 'loss' : ''}">${d.gt(0) ? '+' : ''}${money(d)}</span>${pct}`;
+    const first = Decimal.parse(sparkPts[0].value);
+    if (!first.isZero() && i > 1) txt += `<br>تغییر نسبت به ابتدای بازه: ${signedPct(cur.minus(first).div(first))}`;
+  } else txt += '<br>ابتدای بازه';
+  const read = document.getElementById('sp-read');
+  if (read) read.innerHTML = txt;
+}
+
 function sparkHtml(): string {
   const all = store.history ?? [];
-  const days: Record<string, number> = { '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
+  const days: Record<string, number> = { '1d': 1, '1w': 7, '1m': 30, '3m': 90, '6m': 180, '1y': 365 };
   const cutoff = days[view.historyRange] ? Date.now() - days[view.historyRange] * 86400000 : 0;
   const points = all.filter((p) => Date.parse(p.at) >= cutoff && Number.isFinite(Number(p.value)));
   const chips = RANGES.map(([k, l]) => `<button class="rg" data-action="history-range" data-v="${k}" aria-pressed="${view.historyRange === k}">${l}</button>`).join('');
@@ -422,7 +455,8 @@ function sparkHtml(): string {
   const min = Math.min(...points.map((p) => Number(p.value)));
   const max = Math.max(...points.map((p) => Number(p.value)));
   const span = max - min || Math.max(Math.abs(max) * 0.02, 1);
-  const sampled = points.length > 44 ? points.filter((_, i) => i === 0 || i === points.length - 1 || i % Math.ceil(points.length / 42) === 0) : points;
+  const sampled = points.length > 120 ? points.filter((_, i) => i === 0 || i === points.length - 1 || i % Math.ceil(points.length / 118) === 0) : points;
+  sparkPts = sampled.map((p) => ({ at: p.at, value: p.value }));
   const coords = sampled.map((p, i) => ({ x: 6 + (i / Math.max(1, sampled.length - 1)) * 308, y: 46 - ((Number(p.value) - min) / span) * 38 }));
   const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} 54 L${coords[0].x.toFixed(1)} 54 Z`;
@@ -430,9 +464,11 @@ function sparkHtml(): string {
   const lbl = change === null ? '—' : `${change > 0 ? '+' : ''}${toFa(change.toFixed(1)).replace('.', '٫')}٪`;
   return `<div class="spark">
     <div class="spark-top"><span class="spark-t">روند سرمایه · ${dateFa(points[0].at.slice(0, 10))} تا ${dateFa(points[points.length - 1].at.slice(0, 10))}</span><b class="${up ? 'up' : 'down'}">${ltr(lbl)}</b></div>
-    <svg viewBox="0 0 320 56" class="spark-svg" role="img" aria-label="نمودار روند ارزش سرمایه"><defs><linearGradient id="sp-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#6fe7e0" stop-opacity=".35"/><stop offset="1" stop-color="#6fe7e0" stop-opacity="0"/></linearGradient></defs>
+    <svg viewBox="0 0 320 56" class="spark-svg" role="img" aria-label="نمودار روند ارزش سرمایه؛ برای دیدن مقدار هر نقطه روی آن بزنید یا انگشت را بکشید"><defs><linearGradient id="sp-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#6fe7e0" stop-opacity=".35"/><stop offset="1" stop-color="#6fe7e0" stop-opacity="0"/></linearGradient></defs>
     <path d="${area}" fill="url(#sp-fill)"/><path d="${line}" fill="none" stroke="#6fe7e0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="${coords[coords.length - 1].x.toFixed(1)}" cy="${coords[coords.length - 1].y.toFixed(1)}" r="3.4" fill="#6fe7e0"/></svg>
+    <circle cx="${coords[coords.length - 1].x.toFixed(1)}" cy="${coords[coords.length - 1].y.toFixed(1)}" r="3.4" fill="#6fe7e0"/>
+    <line id="sp-line" x1="0" x2="0" y1="2" y2="54" stroke="#fff" stroke-opacity=".55" stroke-width="1" visibility="hidden"/><circle id="sp-dot" r="4" fill="#fff" stroke="#6fe7e0" stroke-width="2" visibility="hidden"/></svg>
+    <div class="spark-read" id="sp-read" aria-live="polite">روی نمودار بزنید یا انگشت را بکشید تا هر تغییر را ببینید.</div>
     <div class="rgs">${chips}</div></div>`;
 }
 
@@ -452,7 +488,7 @@ function assetsOverview(pf: Portfolio, ppl: { receivable: Decimal; payable: Deci
       key: a.asset.id, label: a.asset.name, value: a.value,
       icon: `<span class="ico sm">${iconSvg(iconKind(a.asset))}</span>`,
       sub: qty(a.state.quantity, a.asset),
-      extra: a.value ? pnl(a.unrealized) : '',
+      extra: a.value ? pnl(a.unrealized) + (a.unrealized && a.state.costBasis.gt(0) ? ' ' + signedPct(a.unrealized.div(a.state.costBasis)) : '') : '',
       open: a.asset.id,
     });
   }
@@ -825,9 +861,22 @@ function viewMarket(): string {
 
 /* ------------------------------ دارایی‌ها ------------------------------ */
 
+/** سود و زیان کل دارایی‌های دارای قیمت، با درصد نسبت به بهای خرید موجودی */
+function pnlSummary(pf: Portfolio): string {
+  let cost = Decimal.ZERO;
+  for (const a of pf.assets) if (a.value !== null && a.state.quantity.gt(0)) cost = cost.plus(a.state.costBasis);
+  if (cost.lte(0)) return '';
+  const pct = signedPct(pf.unrealizedTotal.div(cost));
+  return `<div class="grid2">
+    <div class="tile"><span class="k">سود یا زیان کل دارایی‌های فعلی</span><span class="v">${pnl(pf.unrealizedTotal)} ${pct}</span><span class="k">نسبت به بهای خرید موجودی</span></div>
+    <div class="tile"><span class="k">سود یا زیان فروش‌ها</span><span class="v">${pnl(pf.realizedTotal)}</span></div>
+  </div>`;
+}
+
 function viewAssets(pf: Portfolio): string {
   const ppl = peopleWithCheques();
   return `${header('دارایی‌ها')}
+    ${pnlSummary(pf)}
     <h2 class="section-title"><span>سهم هر دارایی از سرمایه</span></h2>
     ${assetsOverview(pf, ppl)}
     <div class="actions">
@@ -875,7 +924,7 @@ function viewAssetDetail(id: string, pf: Portfolio): string {
       <div class="tile"><span class="k">مجموع مبلغ خرید</span><span class="v">${money(state.totalBought)}</span></div>
       <div class="tile"><span class="k">مجموع کارمزدها</span><span class="v">${money(state.totalFees)}</span></div>
       <div class="tile"><span class="k">قیمت روز</span>${priceTile}</div>
-      <div class="tile"><span class="k">سود یا زیان موجودی فعلی</span><span class="v">${pnl(unrealized)}</span></div>
+      <div class="tile"><span class="k">سود یا زیان موجودی فعلی</span><span class="v">${pnl(unrealized)}${unrealized && state.costBasis.gt(0) ? ' ' + signedPct(unrealized.div(state.costBasis)) : ''}</span></div>
       <div class="tile"><span class="k">سود یا زیان فروش‌ها</span><span class="v">${pnl(state.realizedPnl)}</span></div>
     </div>
     <h2 class="section-title">تاریخچه</h2>
@@ -2763,7 +2812,7 @@ document.addEventListener('click', (ev) => {
   }
   switch (act) {
     case 'history-range':
-      if (['1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
+      if (['1d', '1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
       render();
       break;
     case 'lock-open': {
@@ -3775,6 +3824,21 @@ document.addEventListener('change', (ev) => {
     renderModal();
   }
 });
+
+let sparkDown = false;
+document.addEventListener('pointerdown', (ev) => {
+  const svg = (ev.target as Element | null)?.closest?.('.spark-svg') as SVGSVGElement | null;
+  if (!svg) return;
+  sparkDown = true;
+  sparkSelect(svg, ev.clientX);
+});
+document.addEventListener('pointermove', (ev) => {
+  if (!sparkDown) return;
+  const svg = document.querySelector('.spark-svg') as SVGSVGElement | null;
+  if (svg) sparkSelect(svg, ev.clientX);
+});
+document.addEventListener('pointerup', () => { sparkDown = false; });
+document.addEventListener('pointercancel', () => { sparkDown = false; });
 
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && modal) closeModal();
