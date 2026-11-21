@@ -36,6 +36,8 @@ type Tab = 'home' | 'assets' | 'txs' | 'people' | 'settings';
 interface Settings {
   /** پنهان کردن مبلغ‌ها (برای وقتی دیگران نگاه می‌کنند) */
   hide?: boolean;
+  /** راهنمای اول کار نشان داده شده یا رد شده است */
+  onboarded?: boolean;
   /** نرخ تورم سالانه‌ی واردشده‌ی کاربر (٪)؛ تخمین دستی است */
   inflation?: number;
   /** کلید قیمت‌های منتخب برای نمایش در خانه (اگر نباشد، فهرست پیش‌فرض) */
@@ -1840,6 +1842,8 @@ function viewSettings(): string {
     </div>
     ${lockSection()}
     ${encSection()}
+    <h2 class="section-title">راهنما</h2>
+    <div class="actions"><button class="btn ghost" data-action="onboard-open">نمایش دوباره‌ی راهنمای اول کار</button></div>
     <h2 class="section-title">گزارش و خروجی</h2>
     <div class="note info"><span>گزارش هر ماه شمسی و فایل CSV برای Excel. این فایل رمز ندارد؛ فقط برای کسی بفرستید که به آن اعتماد دارید.</span>
       <div class="actions"><button class="btn" data-action="report-open">گزارش ماهانه و خروجی</button></div></div>
@@ -2195,6 +2199,7 @@ type Modal =
   | { kind: 'income'; f: IncomeForm }
   | { kind: 'report'; f: { y: number; m: number } }
   | { kind: 'loan'; f: LoanForm }
+  | { kind: 'onboard'; f: { step: number } }
   | { kind: 'backup'; f: { pass: string; pass2: string; error: string; busy: boolean } }
   | { kind: 'restore'; f: { text: string; pass: string; error: string; busy: boolean; stage: 'pass' | 'confirm'; parsed: Store | null; at: string } }
   | null;
@@ -2209,6 +2214,19 @@ function closeModal() {
     modal = { kind: 'recover' };
     renderModal();
   }
+}
+
+const ONBOARD: { title: string; body: string; icon: string }[] = [
+  { icon: '◈', title: 'به دارا خوش آمدید', body: 'دارایی‌ها، بدهی‌ها، طلب‌ها و چک‌هایتان را یک‌جا ببینید و سود و زیانتان را بدانید. اطلاعات فقط روی گوشی شما می‌ماند و جایی فرستاده نمی‌شود.' },
+  { icon: '①', title: 'از کجا شروع کنم؟', body: 'اول موجودی نقد را با «واریز نقد» ثبت کنید. بعد هر خرید یا فروش (طلا، دلار، سهام و…) را با «ثبت خرید» و «ثبت فروش» وارد کنید. می‌توانید هر چیز را بعداً ویرایش یا حذف کنید.' },
+  { icon: '②', title: 'قیمت‌ها از کجا می‌آید؟', body: 'قیمت طلا و دلار خودکار از اینترنت می‌آید و سهام را از بخش «دارایی‌ها» به بورس وصل می‌کنید. برنامه هیچ قیمتی نمی‌سازد: منبع و زمان هر قیمت دیده می‌شود و اگر قدیمی باشد هشدار می‌دهد.' },
+  { icon: '③', title: 'اطلاعات را امن نگه دارید', body: 'در «تنظیمات» قفل رمز یا الگو بگذارید و حتماً پشتیبان بگیرید. اگر برنامه پاک شود یا گوشی عوض شود، فقط فایل پشتیبان اطلاعات را برمی‌گرداند. یادآورها هم اقساط و چک‌ها را به شما خبر می‌دهند.' },
+];
+
+function finishOnboard() {
+  store.settings.onboarded = true;
+  save();
+  closeModal();
 }
 
 function sheet(inner: string): string {
@@ -2428,6 +2446,22 @@ function renderModal() {
         <button class="btn" data-action="recover-file">بازیابی از فایل پشتیبان</button>
         <button class="btn ghost bad" data-action="recover-empty">شروع با اطلاعات خالی</button>
       </div><input type="file" id="restore-file" hidden>`);
+    return;
+  }
+  if (modal.kind === 'onboard') {
+    const i = Math.min(modal.f.step, ONBOARD.length - 1);
+    const p = ONBOARD[i];
+    const last = i === ONBOARD.length - 1;
+    modalEl.innerHTML = sheet(`<div class="onb">
+      <div class="onb-ic" aria-hidden="true">${p.icon}</div>
+      <h2>${p.title}</h2>
+      <p>${p.body}</p>
+      <div class="onb-dots" aria-label="صفحه ${toFa(String(i + 1))} از ${toFa(String(ONBOARD.length))}">${ONBOARD.map((_, k) => `<span class="${k === i ? 'on' : ''}"></span>`).join('')}</div>
+      <div class="actions">
+        ${last ? '<button class="btn" data-action="onboard-done">شروع کنید</button>' : '<button class="btn" data-action="onboard-next">بعدی</button>'}
+        ${i > 0 ? '<button class="btn ghost" data-action="onboard-prev">قبلی</button>' : ''}
+        ${last ? '' : '<button class="btn link" data-action="onboard-done">رد کردن</button>'}
+      </div></div>`);
     return;
   }
   if (modal.kind === 'loan') {
@@ -2894,6 +2928,20 @@ document.addEventListener('click', (ev) => {
       checkPriceAlerts();
       break;
     }
+    case 'onboard-open':
+      modal = { kind: 'onboard', f: { step: 0 } };
+      renderModal();
+      break;
+    case 'onboard-next':
+      if (modal?.kind === 'onboard') { modal.f.step = Math.min(ONBOARD.length - 1, modal.f.step + 1); renderModal(); }
+      break;
+    case 'onboard-prev':
+      if (modal?.kind === 'onboard') { modal.f.step = Math.max(0, modal.f.step - 1); renderModal(); }
+      break;
+    case 'onboard-done':
+      finishOnboard();
+      render();
+      break;
     case 'loan-open':
       modal = { kind: 'loan', f: newLoanForm() };
       renderModal();
@@ -3730,7 +3778,13 @@ function startup() {
   // First-run migration / recovery mirror: keep the old localStorage copy untouched.
   if (!writesBlocked && !secureMode) toNative({ type: 'sqlite-snapshot', snapshot: JSON.stringify(store) });
   if (writesBlocked) { modal = { kind: 'recover' }; renderModal(); }
-  else if (recoveredFromMirror) window.setTimeout(() => toast('اطلاعات از نسخه‌ی پشتیبان خودکار گوشی بازیابی شد.'), 300);
+  else if (!store.settings.onboarded && !store.sample && store.txs.length === 0 && !(store.debts?.length) && !(store.cheques?.length)) {
+    modal = { kind: 'onboard', f: { step: 0 } }; renderModal();
+  } else if (!store.settings.onboarded && !store.sample) {
+    store.settings.onboarded = true; // کاربر قدیمی با داده: راهنما لازم نیست
+    persist();
+  }
+  if (!writesBlocked && recoveredFromMirror) window.setTimeout(() => toast('اطلاعات از نسخه‌ی پشتیبان خودکار گوشی بازیابی شد.'), 300);
   autoCheckUpdate();
   checkPriceAlerts();
   scheduleNoteSync();

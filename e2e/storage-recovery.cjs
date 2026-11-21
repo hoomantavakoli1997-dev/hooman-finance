@@ -6,7 +6,7 @@ const KEY = 'hooman-finance-prototype-v1';
 let failed = 0;
 const ok = (c, m) => { console.log((c ? 'ok   ' : 'FAIL ') + m); if (!c) failed++; };
 
-const goodStore = (name) => JSON.stringify({ v: 1, sample: false, assets: [{ id: 'a1', name, kind: 'stock', unit: 'سهم' }], txs: [], prices: {}, people: [], debts: [], payments: [], cheques: [], reminders: [], history: [], settings: { unit: 'toman', theme: 'system', font: 'normal' } });
+const goodStore = (name) => JSON.stringify({ v: 1, sample: false, assets: [{ id: 'a1', name, kind: 'stock', unit: 'سهم' }], txs: [], prices: {}, people: [], debts: [], payments: [], cheques: [], reminders: [], history: [], settings: { unit: 'toman', theme: 'system', font: 'normal', onboarded: true } });
 
 async function open(init) {
   const b = await chromium.launch();

@@ -42,6 +42,10 @@ async function openApp(init = {}) {
   }, { init, KEY });
   await page.goto(PAGE);
   await page.waitForTimeout(400);
+  // راهنمای اول کار مانع کلیک‌ها می‌شود؛ مگر اینکه آزمون خودش آن را بخواهد
+  if (!init.keepOnboarding && await page.locator('.onb').count()) {
+    await page.evaluate(() => { const b = document.createElement('button'); b.dataset.action = 'onboard-done'; document.body.appendChild(b); b.click(); b.remove(); });
+  }
   const api = {
     browser, page, errors,
     store: () => page.evaluate((k) => JSON.parse(localStorage.getItem(k)), KEY),
