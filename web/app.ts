@@ -14,6 +14,7 @@ import {
   CATEGORIES, CategoryId, MarketEntry, classify, isStale, parseMarket, searchMarket, snapshotTime,
 } from '../src/core/market';
 import { Envelope, decryptText, encryptText, importKey, parseEnvelope, secureAvailable, validKeyHex } from './secure';
+import { esc, fmtNum, toEn, toFa } from './format';
 import sampleRaw from './market-sample.json';
 import { INCOME_LABEL, IncomeKind, accrualInterest, incomeDraft, incomeTotals, validateIncome } from '../src/core/income';
 import { FamilyItem, FamilyOpts, familyReportText } from '../src/core/familyreport';
@@ -265,26 +266,6 @@ function save() {
 }
 
 /* ============================ قالب‌بندی ============================ */
-
-const FA = '۰۱۲۳۴۵۶۷۸۹';
-const toFa = (s: string) => s.replace(/\d/g, (d) => FA[Number(d)]);
-const toEn = (s: string) =>
-  s
-    .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0))
-    .replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660))
-    .replace(/[٬,،\s‌‏‎]/g, '')
-    .replace(/٫/g, '.');
-const esc = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
-const group = (i: string) => i.replace(/\B(?=(\d{3})+(?!\d))/g, '٬');
-
-function fmtNum(d: Decimal, places = 0): string {
-  const s = d.toFixed(places);
-  const neg = s[0] === '-';
-  const [i, f = ''] = (neg ? s.slice(1) : s).split('.');
-  const fr = f.replace(/0+$/, '');
-  return (neg ? '−' : '') + toFa(group(i)) + (fr ? '٫' + toFa(fr) : '');
-}
 
 const isToman = () => store.settings.unit === 'toman';
 const unitLabel = () => (isToman() ? 'تومان' : 'ریال');
