@@ -338,6 +338,11 @@ button.row:active { transform: scale(.992); }
 .onb-dots { display:flex; gap:.4rem; }
 .onb-dots span { width:.5rem; height:.5rem; border-radius:50%; background:var(--line); }
 .onb-dots span.on { background:var(--teal); width:1.2rem; border-radius:.3rem; }
+.set-group { display:flex; align-items:center; gap:.7rem; margin:1.6rem 0 .4rem; padding:.7rem .8rem; border-radius:1rem; background:var(--surface-2); border:1px solid var(--line); }
+.set-group:first-of-type { margin-top:.6rem; }
+.set-group .n { flex:none; width:2rem; height:2rem; border-radius:50%; display:grid; place-items:center; background:var(--teal); color:#05302e; font-weight:800; }
+.set-group b { display:block; font-size:1rem; }
+.set-group span:not(.n) { display:block; font-size:.78rem; color:var(--muted); }
 .famprev { white-space:pre-wrap; background:var(--surface-2); border:1px solid var(--line); border-radius:.8rem; padding:.8rem; font:inherit; font-size:.88rem; line-height:1.9; max-height:40vh; overflow:auto; margin:.5rem 0; }
 </style>
 <div id="app" dir="rtl" lang="fa"></div>

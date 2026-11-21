@@ -1917,33 +1917,14 @@ async function lockSave() {
 function viewSettings(): string {
   const s = store.settings;
   return `${header('تنظیمات')}
+    <div class="set-group"><span class="n">۱</span><div><b>نمایش</b><span>واحد پول، ظاهر و اندازه‌ی نوشته‌ها</span></div></div>
     <div class="field"><span class="lab">واحد پول نمایش</span>${seg('set-unit', s.unit, [['toman', 'تومان'], ['rial', 'ریال']])}
       <span class="hint">همه‌ی مبالغ به‌صورت ریال ذخیره می‌شوند و فقط نمایش عوض می‌شود.</span></div>
     <div class="field"><span class="lab">ظاهر برنامه</span>${seg('set-theme', s.theme, [['system', 'خودکار'], ['light', 'روشن'], ['dark', 'تاریک']])}</div>
     <div class="field"><span class="lab">اندازه‌ی نوشته‌ها</span>${seg('set-font', s.font, [['small', 'کوچک'], ['normal', 'معمولی'], ['large', 'بزرگ']])}</div>
-    <h2 class="section-title">قیمت خودکار</h2>
-    <div class="note info"><span>منبع: TGJU (طلا ۱۸ عیار، دلار، تتر). قیمت قدیمی، صفر یا جهش مشکوک رد می‌شود و آخرین قیمت معتبر می‌ماند.</span>
-      <button class="btn link" data-action="paste-open">چسباندن پاسخ TGJU (برای امتحان)</button></div>
-    ${updateSection()}
-    <h2 class="section-title">پشتیبانی</h2>
-    <div class="note info">
-      <span>برای پرسش، گزارش خطا یا پیشنهاد، در تلگرام پیام بدهید:</span>
-      <div class="actions">
-        <a class="btn" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer" data-action="support-open">باز کردن تلگرام</a>
-        <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
-      </div>
-    </div>
+    <div class="set-group"><span class="n">۲</span><div><b>امنیت و اطلاعات</b><span>قفل، رمزنگاری و پشتیبان‌گیری</span></div></div>
     ${lockSection()}
     ${encSection()}
-    <h2 class="section-title">راهنما</h2>
-    <div class="actions"><button class="btn ghost" data-action="onboard-open">نمایش دوباره‌ی راهنمای اول کار</button></div>
-    <h2 class="section-title">گزارش و خروجی</h2>
-    <div class="note info"><span>گزارش هر ماه شمسی و فایل CSV برای Excel. این فایل رمز ندارد؛ فقط برای کسی بفرستید که به آن اعتماد دارید.</span>
-      <div class="actions"><button class="btn" data-action="report-open">گزارش ماهانه و خروجی</button></div></div>
-    ${widgetSection()}
-    <h2 class="section-title">گزارش برای خانواده</h2>
-    <div class="note info"><span>یک خلاصه‌ی متنی و فقط‌خواندنی برای فرستادن به همسر یا فرزند. پیش‌فرض بدون مبلغ و بدون نام است و شما تعیین می‌کنید چه چیزی در آن بیاید.</span>
-      <div class="actions"><button class="btn" data-action="family-open">ساخت گزارش خانواده</button></div></div>
     <h2 class="section-title">پشتیبان‌گیری</h2>
     <div class="note info"><span>${backupInfoHtml()}</span>
       <span>فایل پشتیبان با یک رمز که خودتان می‌گذارید قفل می‌شود و بدون آن رمز خوانده نمی‌شود. رمز جایی ذخیره یا فرستاده نمی‌شود؛ اگر فراموشش کنید پشتیبان باز نمی‌شود.</span>
@@ -1953,7 +1934,35 @@ function viewSettings(): string {
       </div>
       <input type="file" id="restore-file" hidden>
     </div>
-    <h2 class="section-title">داده‌ها</h2>
+    <div class="set-group"><span class="n">۳</span><div><b>قیمت‌ها، ویجت و اعلان</b><span>منبع قیمت خودکار و ویجت صفحه‌ی اصلی</span></div></div>
+    <h2 class="section-title">قیمت خودکار</h2>
+    <div class="note info"><span>منبع: TGJU (طلا ۱۸ عیار، دلار، تتر). قیمت قدیمی، صفر یا جهش مشکوک رد می‌شود و آخرین قیمت معتبر می‌ماند.</span>
+      <button class="btn link" data-action="paste-open">چسباندن پاسخ TGJU (برای امتحان)</button></div>
+    ${widgetSection()}
+    <h2 class="section-title">یادآورها و اعلان‌ها</h2>
+    <div class="note info"><span>یادآور اقساط، چک‌ها، تاریخ دلخواه و هشدار قیمت خرید یا فروش.</span>
+      <div class="actions"><button class="btn" data-action="rem-open">باز کردن یادآورها</button></div></div>
+    <div class="set-group"><span class="n">۴</span><div><b>گزارش‌ها</b><span>گزارش ماهانه، خروجی Excel و گزارش خانواده</span></div></div>
+    <h2 class="section-title">گزارش و خروجی</h2>
+    <div class="note info"><span>گزارش هر ماه شمسی و فایل CSV برای Excel. این فایل رمز ندارد؛ فقط برای کسی بفرستید که به آن اعتماد دارید.</span>
+      <div class="actions"><button class="btn" data-action="report-open">گزارش ماهانه و خروجی</button></div></div>
+    <h2 class="section-title">گزارش برای خانواده</h2>
+    <div class="note info"><span>یک خلاصه‌ی متنی و فقط‌خواندنی برای فرستادن به همسر یا فرزند. پیش‌فرض بدون مبلغ و بدون نام است و شما تعیین می‌کنید چه چیزی در آن بیاید.</span>
+      <div class="actions"><button class="btn" data-action="family-open">ساخت گزارش خانواده</button></div></div>
+    <div class="set-group"><span class="n">۵</span><div><b>راهنما، پشتیبانی و به‌روزرسانی</b><span>آموزش برنامه، ارتباط با پشتیبان و نسخه‌ی جدید</span></div></div>
+    <h2 class="section-title">راهنما</h2>
+    <div class="actions"><button class="btn ghost" data-action="onboard-open">نمایش دوباره‌ی راهنمای اول کار</button></div>
+    <h2 class="section-title">پشتیبانی</h2>
+    <div class="note info">
+      <span>برای پرسش، گزارش خطا یا پیشنهاد، در تلگرام پیام بدهید:</span>
+      <div class="actions">
+        <a class="btn" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer" data-action="support-open">باز کردن تلگرام</a>
+        <button class="btn ghost" data-action="support-copy">کپی شناسه</button>
+      </div>
+    </div>
+    ${updateSection()}
+    <div class="set-group"><span class="n">۶</span><div><b>داده‌ها</b><span>بازگشت به داده‌ی آزمایشی یا پاک کردن همه‌چیز</span></div></div>
+    <h2 class="section-title">عملیات حساس</h2>
     <div class="actions">
       <button class="btn ghost" data-action="ask" data-v="reset">بازگشت به داده‌ی آزمایشی</button>
       <button class="btn ghost" data-action="ask" data-v="clear">پاک کردن همه‌ی داده‌ها</button>
