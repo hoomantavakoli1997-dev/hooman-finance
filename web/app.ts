@@ -23,6 +23,7 @@ import { FamilyItem, FamilyOpts, familyReportText } from '../src/core/familyrepo
 import { monthRange, monthReport, monthTitle, reportCsv, shiftMonth, txCsv } from '../src/core/report';
 import { AllocId, computeAllocation } from '../src/core/allocation';
 import { LoanMethod, LoanResult, computeLoan, impliedAnnualRate, validateLoan } from '../src/core/loan';
+import { assetOpportunity, priceSeries } from '../src/core/assetinsight';
 import { GOLD_ID, PriceLog, USD_ID, computeRealReturn, logPrices, type Bench } from '../src/core/realreturn';
 import { formatJalali, isoToJalali, jalaliToIso, todayIso } from '../src/core/jalali';
 import {
@@ -46,6 +47,8 @@ interface Settings {
   onboarded?: boolean;
   /** نرخ تورم سالانه‌ی واردشده‌ی کاربر (٪)؛ تخمین دستی است */
   inflation?: number;
+  /** نرخ سود سالانه‌ی سپرده‌ی بانکی (٪) برای مقایسه با دارایی‌ها؛ دستی */
+  bankRate?: number;
   /** کلید قیمت‌های منتخب برای نمایش در خانه (اگر نباشد، فهرست پیش‌فرض) */
   favs?: string[];
   /** آخرین باری که فایل پشتیبان ساخته شد (ISO) */
@@ -384,6 +387,7 @@ const view = {
   tab: 'home' as Tab, assetId: null as string | null, search: '', filter: 'all' as string,
   person: null as string | null,
   market: false, mcat: 'all' as CategoryId | 'all', mq: '', mstale: false,
+  assetRange: '3m',
   historyRange: '1m' as '1d' | '1w' | '1m' | '3m' | '6m' | '1y' | 'all',
 };
 
@@ -467,6 +471,9 @@ const RANGES: [string, string][] = [['1d', '۱ روز'], ['1w', '۱ هفته'], 
 /** نمودار کوچک روند سرمایه برای داخل کارت اصلی خانه */
 /** نقاط نمودار روند که الان روی صفحه است (برای انتخاب با لمس) */
 let sparkPts: { at: string; value: string }[] = [];
+/** برچسب و قالب زمان خواندن نقطه‌ی انتخاب‌شده (نمودار سرمایه یا نمودار قیمت یک دارایی) */
+let sparkLabel = 'سرمایه';
+let sparkDateOnly = false;
 
 function sparkSelect(svg: SVGSVGElement, clientX: number) {
   const n = sparkPts.length;
@@ -485,7 +492,7 @@ function sparkSelect(svg: SVGSVGElement, clientX: number) {
   if (line) { line.setAttribute('x1', x.toFixed(1)); line.setAttribute('x2', x.toFixed(1)); line.setAttribute('visibility', 'visible'); }
   if (dot) { dot.setAttribute('cx', x.toFixed(1)); dot.setAttribute('cy', y.toFixed(1)); dot.setAttribute('visibility', 'visible'); }
   const cur = Decimal.parse(sparkPts[i].value);
-  let txt = `<b>${stamp(sparkPts[i].at)}</b> · سرمایه <b>${money(cur)}</b>`;
+  let txt = `<b>${sparkDateOnly ? dateFa(sparkPts[i].at.slice(0, 10)) : stamp(sparkPts[i].at)}</b> · ${sparkLabel} <b>${money(cur)}</b>`;
   if (i > 0) {
     const prev = Decimal.parse(sparkPts[i - 1].value);
     const d = cur.minus(prev);
@@ -516,6 +523,7 @@ function sparkHtml(): string {
   const span = max - min || Math.max(Math.abs(max) * 0.02, 1);
   const sampled = points.length > 120 ? points.filter((_, i) => i === 0 || i === points.length - 1 || i % Math.ceil(points.length / 118) === 0) : points;
   sparkPts = sampled.map((p) => ({ at: p.at, value: p.value }));
+  sparkLabel = 'سرمایه'; sparkDateOnly = false;
   const coords = sampled.map((p, i) => ({ x: 6 + (i / Math.max(1, sampled.length - 1)) * 308, y: 46 - ((Number(p.value) - min) / span) * 38 }));
   const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} 54 L${coords[0].x.toFixed(1)} 54 Z`;
@@ -945,6 +953,74 @@ function viewAssets(pf: Portfolio): string {
     </div>`;
 }
 
+/** نمودار روند قیمت یک دارایی از قیمت‌های خودکاری که برنامه هر بار ثبت کرده (هیچ نقطه‌ای ساخته نمی‌شود) */
+const ASSET_RANGES: [string, string, number][] = [['1m', '۱ ماه', 30], ['3m', '۳ ماه', 90], ['6m', '۶ ماه', 180], ['1y', '۱ سال', 365], ['all', 'همه', 0]];
+function assetChartHtml(id: string): string {
+  const all = priceSeries(id, store.priceLog ?? {});
+  const rg = ASSET_RANGES.find(([k]) => k === view.assetRange) ?? ASSET_RANGES[1];
+  const cutoff = rg[2] ? todayIso(new Date(Date.now() - rg[2] * 86400000)) : '';
+  const pts = all.filter((p) => p.date >= cutoff);
+  const chips = ASSET_RANGES.map(([k, l]) => `<button class="rg" data-action="asset-range" data-v="${k}" aria-pressed="${rg[0] === k}">${l}</button>`).join('');
+  const head = '<h2 class="section-title">روند قیمت</h2>';
+  if (pts.length < 2) {
+    return `${head}<div class="spark"><div class="spark-empty">${all.length < 2 ? 'قیمت‌های خودکار از همین امروز ثبت می‌شود و با هر بار باز کردن برنامه یک نقطه به نمودار اضافه می‌شود. هنوز برای نمودار کافی نیست. قیمت تاریخی ساخته نمی‌شود.' : 'در این بازه دو قیمت ثبت‌شده وجود ندارد؛ بازه‌ی بزرگ‌تری را بزنید.'}</div><div class="rgs">${chips}</div></div>`;
+  }
+  const vals = pts.map((p) => p.price.toNumber());
+  const first = vals[0], last = vals[vals.length - 1];
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = max - min || Math.max(Math.abs(max) * 0.02, 1);
+  const step = pts.length > 120 ? Math.ceil(pts.length / 118) : 1;
+  const sampled = pts.filter((_, i) => i === 0 || i === pts.length - 1 || i % step === 0);
+  sparkPts = sampled.map((p) => ({ at: p.date + 'T12:00:00', value: p.price.toString() }));
+  sparkLabel = 'قیمت'; sparkDateOnly = true;
+  const sv = sampled.map((p) => p.price.toNumber());
+  const coords = sv.map((v, i) => ({ x: 6 + (i / Math.max(1, sv.length - 1)) * 308, y: 46 - ((v - min) / span) * 38 }));
+  const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} 54 L${coords[0].x.toFixed(1)} 54 Z`;
+  const ch = first ? (last - first) / first * 100 : null;
+  const up = last >= first;
+  const lbl = ch === null ? '—' : `${ch > 0 ? '+' : ''}${toFa(ch.toFixed(1)).replace('.', '٫')}٪`;
+  return `${head}<div class="spark">
+    <div class="spark-top"><span class="spark-t">${dateFa(pts[0].date)} تا ${dateFa(pts[pts.length - 1].date)} · ${toFa(String(pts.length))} قیمت ثبت‌شده</span><b class="${up ? 'up' : 'down'}">${ltr(lbl)}</b></div>
+    <svg viewBox="0 0 320 56" class="spark-svg" role="img" aria-label="نمودار روند قیمت؛ برای دیدن قیمت هر روز روی آن بزنید یا انگشت را بکشید"><defs><linearGradient id="sp-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#6fe7e0" stop-opacity=".35"/><stop offset="1" stop-color="#6fe7e0" stop-opacity="0"/></linearGradient></defs>
+    <path d="${area}" fill="url(#sp-fill)"/><path d="${line}" fill="none" stroke="#6fe7e0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${coords[coords.length - 1].x.toFixed(1)}" cy="${coords[coords.length - 1].y.toFixed(1)}" r="3.4" fill="#6fe7e0"/>
+    <line id="sp-line" x1="0" x2="0" y1="2" y2="54" stroke="#fff" stroke-opacity=".55" stroke-width="1" visibility="hidden"/><circle id="sp-dot" r="4" fill="#fff" stroke="#6fe7e0" stroke-width="2" visibility="hidden"/></svg>
+    <div class="spark-read" id="sp-read" aria-live="polite">روی نمودار بزنید یا انگشت را بکشید تا قیمت هر روز را ببینید.</div>
+    <div class="rgs">${chips}</div></div>`;
+}
+
+/** مقایسه‌ی این دارایی با بانک و تورم؛ نرخ‌ها را کاربر وارد می‌کند */
+function opportunityCard(id: string, price: PriceEntry | null | undefined): string {
+  if (store.sample) return '';
+  const asset = assetById(id);
+  if (!asset) return '';
+  const bank = typeof store.settings.bankRate === 'number' ? store.settings.bankRate : null;
+  const own = typeof asset.inflation === 'number' ? asset.inflation : null;
+  const glob = typeof store.settings.inflation === 'number' ? store.settings.inflation : null;
+  const infl = own ?? glob;
+  const now = price ? parseDec(price.price) : null;
+  const o = assetOpportunity(id, store.txs, now, todayIso(), bank, infl);
+  const btns = `<div class="actions">
+    <button class="btn ghost" data-action="bank-open">${bank === null ? 'وارد کردن سود بانکی' : `سود بانکی: ${toFa(String(bank))}٪ (تغییر)`}</button>
+    <button class="btn ghost" data-action="infl-open" data-v="${esc(id)}">${infl === null ? 'وارد کردن نرخ تورم' : `تورم ${own !== null ? 'این دارایی' : 'کلی'}: ${toFa(String(infl))}٪ (تغییر)`}</button></div>`;
+  if (!o) return `<h2 class="section-title">مقایسه با بانک و تورم</h2><section class="tile rrcard"><span class="hint">برای مقایسه، موجودی و قیمت روز این دارایی لازم است.</span>${btns}</section>`;
+  const row = (label: string, v: string) => `<div class="between rr"><span>${label}</span><span>${v}</span></div>`;
+  const months = o.avgDays >= 60 ? `${toFa(String(Math.round(o.avgDays / 30)))} ماه` : `${toFa(String(o.avgDays))} روز`;
+  let rows = row('میانگین مدت نگهداری', months)
+    + row('میانگین قیمت خرید', money(o.avgCost))
+    + row('ارزش امروز دارایی', money(o.value))
+    + row('سود اسمی', signedPct(o.nominal));
+  rows += o.bankValue
+    ? row(`اگر همان پول در بانک (${toFa(String(bank))}٪ سالانه) بود، امروز می‌شد`, money(o.bankValue)) + row('نسبت به بانک', signedPct(o.vsBank!))
+    : row('مقایسه با بانک', '<span class="muted">سود بانکی وارد نشده</span>');
+  rows += o.inflValue
+    ? row(`برای هم‌پایی با تورم (${toFa(String(infl))}٪) باید می‌شد`, money(o.inflValue)) + row('سود واقعی نسبت به تورم', signedPct(o.real!))
+    : row('مقایسه با تورم', '<span class="muted">نرخ تورم وارد نشده</span>');
+  return `<h2 class="section-title">مقایسه با بانک و تورم</h2><section class="tile rrcard">${rows}
+    <span class="hint">مبنا همین موجودی و تاریخ هر خرید است. سود بانکی به‌صورت مرکب سالانه و تقریبی حساب می‌شود و هر دو نرخ را خودتان وارد می‌کنید؛ برنامه آن‌ها را حدس نمی‌زند.</span>${btns}</section>`;
+}
+
 function viewAssetDetail(id: string, pf: Portfolio): string {
   const sum = pf.assets.find((a) => a.asset.id === id);
   if (!sum) return viewAssets(pf);
@@ -986,6 +1062,8 @@ function viewAssetDetail(id: string, pf: Portfolio): string {
       <div class="tile"><span class="k">سود یا زیان موجودی فعلی</span><span class="v">${pnl(unrealized)}${unrealized && state.costBasis.gt(0) ? ' ' + signedPct(unrealized.div(state.costBasis)) : ''}</span></div>
       <div class="tile"><span class="k">سود یا زیان فروش‌ها</span><span class="v">${pnl(state.realizedPnl)}</span></div>
     </div>
+    ${assetChartHtml(id)}
+    ${opportunityCard(id, price)}
     <h2 class="section-title">تاریخچه</h2>
     <div class="list">${hist}</div>`;
 }
@@ -1061,7 +1139,7 @@ const peopleData = (): PeopleData => ({ people: store.people, debts: store.debts
 /** ثبت ارزش واقعی سبد در لحظه‌ی تغییر؛ واریز/برداشت در ارزش کل دیده می‌شود و سود سرمایه‌گذاری محسوب نمی‌شود. */
 function recordHistory() {
   if (store.sample) return;
-  logPrices(store.priceLog ?? (store.priceLog = {}), [USD_ID, GOLD_ID], store.prices);
+  logPrices(store.priceLog ?? (store.priceLog = {}), [USD_ID, GOLD_ID, ...store.assets.filter((a) => a.id !== CASH_ID).map((a) => a.id)], store.prices);
   try {
     const pf0 = computePortfolio(store.assets, store.txs, store.prices);
     const cash = pf0.cash;
@@ -2347,7 +2425,8 @@ type Modal =
   | { kind: 'recover' }
   | { kind: 'lock'; f: { mode: 'enable' | 'change' | 'disable'; kind: LockKind; stage: 'cur' | 'new' | 'confirm'; first: string; curOk: boolean; cur: string; pin: string; pin2: string; error: string; busy: boolean } }
   | { kind: 'rem'; f: RemForm }
-  | { kind: 'infl'; f: { v: string; error: string } }
+  | { kind: 'infl'; f: { v: string; error: string; target: string } }
+  | { kind: 'bank'; f: { v: string; error: string } }
   | { kind: 'income'; f: IncomeForm }
   | { kind: 'report'; f: { y: number; m: number } }
   | { kind: 'family'; f: FamilyOpts }
@@ -2712,13 +2791,26 @@ function renderModal() {
     return;
   }
   if (modal.kind === 'infl') {
-    modalEl.innerHTML = sheet(`<h2>نرخ تورم سالانه</h2>
+    const ta = modal.f.target ? assetById(modal.f.target) : null;
+    const has = ta ? typeof ta.inflation === 'number' : typeof store.settings.inflation === 'number';
+    modalEl.innerHTML = sheet(`<h2>${ta ? `نرخ تورم ${esc(ta.name)}` : 'نرخ تورم سالانه (کلی)'}</h2>
       <div class="field"><label for="i-v">نرخ تورم سالانه (درصد)</label>
         <input id="i-v" data-field="v" inputmode="decimal" value="${esc(modal.f.v)}" autocomplete="off">
-        <span class="hint">این عدد را خودتان از منبع معتبر (مثلاً مرکز آمار یا بانک مرکزی) وارد می‌کنید؛ برنامه آن را حدس نمی‌زند.</span></div>
+        <span class="hint">${ta ? 'این نرخ فقط برای همین دارایی به کار می‌رود (مثلاً تورم مسکن یا خودرو). اگر حذفش کنید، نرخ کلی تنظیمات استفاده می‌شود. ' : 'برای همه‌ی دارایی‌ها که نرخ جدا ندارند. '}عدد را خودتان از منبع معتبر وارد می‌کنید؛ برنامه آن را حدس نمی‌زند.</span></div>
       <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
       <div class="actions"><button class="btn" data-action="infl-save">ذخیره</button>
-        ${typeof store.settings.inflation === 'number' ? '<button class="btn ghost" data-action="infl-clear">حذف نرخ</button>' : ''}
+        ${has ? '<button class="btn ghost" data-action="infl-clear">حذف نرخ</button>' : ''}
+        <button class="btn ghost" data-action="close">انصراف</button></div>`);
+    return;
+  }
+  if (modal.kind === 'bank') {
+    modalEl.innerHTML = sheet(`<h2>سود بانکی سالانه</h2>
+      <div class="field"><label for="b-v">نرخ سود سالانه‌ی سپرده (درصد)</label>
+        <input id="b-v" data-field="v" inputmode="decimal" value="${esc(modal.f.v)}" autocomplete="off">
+        <span class="hint">نرخ سپرده‌ی بانک خودتان را وارد کنید. برنامه با آن می‌سنجد که اگر پول هر خرید در بانک مانده بود الان چقدر می‌شد؛ به‌صورت مرکب سالانه و تقریبی.</span></div>
+      <div class="err" id="ferr" role="alert">${esc(modal.f.error)}</div>
+      <div class="actions"><button class="btn" data-action="bank-save">ذخیره</button>
+        ${typeof store.settings.bankRate === 'number' ? '<button class="btn ghost" data-action="bank-clear">حذف نرخ</button>' : ''}
         <button class="btn ghost" data-action="close">انصراف</button></div>`);
     return;
   }
@@ -2912,6 +3004,10 @@ document.addEventListener('click', (ev) => {
     return;
   }
   switch (act) {
+    case 'asset-range':
+      if (['1m', '3m', '6m', '1y', 'all'].includes(v)) view.assetRange = v;
+      render();
+      break;
     case 'history-range':
       if (['1d', '1w', '1m', '3m', '6m', '1y', 'all'].includes(v)) view.historyRange = v as typeof view.historyRange;
       render();
@@ -3253,21 +3349,44 @@ document.addEventListener('click', (ev) => {
       break;
     }
     case 'infl-open':
-      modal = { kind: 'infl', f: { v: typeof store.settings.inflation === 'number' ? String(store.settings.inflation) : '', error: '' } };
+    {
+      const target = v && assetById(v) ? v : '';
+      const cur = target ? assetById(target)?.inflation : store.settings.inflation;
+      modal = { kind: 'infl', f: { v: typeof cur === 'number' ? String(cur) : '', error: '', target } };
       renderModal();
+      break;
+    }
+    case 'bank-open':
+      modal = { kind: 'bank', f: { v: typeof store.settings.bankRate === 'number' ? String(store.settings.bankRate) : '', error: '' } };
+      renderModal();
+      break;
+    case 'bank-save': {
+      if (modal?.kind !== 'bank') break;
+      const n = Number(toEn(modal.f.v));
+      if (!modal.f.v.trim() || !Number.isFinite(n) || n < 0 || n > 1000) return setErr('یک درصد معتبر بین ۰ تا ۱۰۰۰ وارد کنید.');
+      store.settings.bankRate = n;
+      save(); closeModal(); render();
+      break;
+    }
+    case 'bank-clear':
+      delete store.settings.bankRate;
+      save(); closeModal(); render();
       break;
     case 'infl-save': {
       if (modal?.kind !== 'infl') break;
       const n = Number(toEn(modal.f.v));
       if (!modal.f.v.trim() || !Number.isFinite(n) || n < 0 || n > 1000) return setErr('یک درصد معتبر بین ۰ تا ۱۰۰۰ وارد کنید.');
-      store.settings.inflation = n;
+      const ta = modal.f.target ? assetById(modal.f.target) : null;
+      if (ta) ta.inflation = n; else store.settings.inflation = n;
       save(); closeModal(); render();
       break;
     }
-    case 'infl-clear':
-      delete store.settings.inflation;
+    case 'infl-clear': {
+      const ta = modal?.kind === 'infl' && modal.f.target ? assetById(modal.f.target) : null;
+      if (ta) delete ta.inflation; else delete store.settings.inflation;
       save(); closeModal(); render();
       break;
+    }
     case 'price-clear':
       if (modal?.kind === 'price') {
         delete store.prices[modal.f.assetId];

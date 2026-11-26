@@ -13,6 +13,8 @@ export interface Asset {
   decimals: number;
   /** کلید این دارایی در هر منبع قیمت: { tgju: 'geram18' }؛ اگر خالی باشد از نگاشت پیش‌فرض استفاده می‌شود */
   priceKeys?: Record<string, string>;
+  /** نرخ تورم سالانه‌ی مخصوص همین دارایی (٪)؛ اگر نباشد نرخ کلی تنظیمات به کار می‌رود */
+  inflation?: number;
 }
 
 /**
